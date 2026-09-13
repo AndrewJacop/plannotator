@@ -60,6 +60,7 @@ import {
 } from "../generated/gitbutler-core.ts";
 import {
 	getCommitDiffInfo,
+	listCommitFiles,
 	listCommitHistory,
 	type CommitDiffInfo,
 } from "../generated/commit-history.ts";
@@ -2352,6 +2353,23 @@ export async function startReviewServer(options: {
 				if (avatarUrl) c.avatarUrl = avatarUrl;
 			}
 			json(res, page);
+		} else if (url.pathname === "/api/commit-files" && req.method === "GET") {
+			// The files one commit changed, with per-file +/- (mirrors Bun
+			// review.ts). Fetched lazily when the navigator EXPANDS a commit
+			// row. Same session gate and cwd resolution as /api/commits, and
+			// the same ref pair runGitDiff uses for commit:<sha>.
+			if (!options.gitContext || isPRMode || workspace || (sessionVcsType && sessionVcsType !== "git")) {
+				json(res, { error: "Commit history is only available for local git reviews" }, 400);
+				return;
+			}
+			const sha = url.searchParams.get("sha") ?? "";
+			const filesCwd = resolveVcsCwd(currentDiffType as DiffType, options.gitContext.cwd);
+			const result = await listCommitFiles(reviewRuntime, sha, filesCwd);
+			if (!result) {
+				json(res, { error: "Could not read commit files" }, 400);
+				return;
+			}
+			json(res, result);
 		} else if (url.pathname === "/api/diff/switch" && req.method === "POST") {
 			// Capture the ordering token BEFORE any await — body delivery can
 			// finish out of arrival order under network jitter, so capturing after

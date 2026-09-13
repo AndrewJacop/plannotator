@@ -17,6 +17,8 @@ export type {
 
 export type {
   CommitDiffInfo,
+  CommitFileEntry,
+  CommitFilesResult,
   CommitHistoryPage,
   CommitListEntry,
 } from "./commit-history";

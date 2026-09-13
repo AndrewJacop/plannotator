@@ -33,6 +33,7 @@ import {
 } from "@plannotator/shared/gitbutler-core";
 import {
   getCommitDiffInfo,
+  listCommitFiles,
   listCommitHistory,
   type CommitDiffInfo,
 } from "@plannotator/shared/commit-history";
@@ -2383,6 +2384,28 @@ export async function startReviewServer(
               if (avatarUrl) c.avatarUrl = avatarUrl;
             }
             return Response.json(page);
+          }
+
+          // API: the files one commit changed, with per-file +/-. Fetched
+          // lazily when the navigator EXPANDS a commit row, so a session that
+          // never expands one never runs these diffs. Same session gate as
+          // /api/commits, same cwd resolution, and the same ref pair
+          // runGitDiff uses for commit:<sha> — so selecting a row here can
+          // never list a file the resulting patch does not contain.
+          if (url.pathname === "/api/commit-files" && req.method === "GET") {
+            if (!gitContext || isPRMode || workspace || (sessionVcsType && sessionVcsType !== "git")) {
+              return Response.json(
+                { error: "Commit history is only available for local git reviews" },
+                { status: 400 },
+              );
+            }
+            const sha = url.searchParams.get("sha") ?? "";
+            const filesCwd = resolveVcsCwd(currentDiffType as DiffType, gitContext.cwd);
+            const result = await listCommitFiles(gitRuntime, sha, filesCwd);
+            if (!result) {
+              return Response.json({ error: "Could not read commit files" }, { status: 400 });
+            }
+            return Response.json(result);
           }
 
           // API: Switch diff type (requires local file access)
