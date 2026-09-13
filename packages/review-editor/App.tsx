@@ -620,7 +620,7 @@ const ReviewApp: React.FC = () => {
   // A path to focus once a navigator-driven diff switch has landed. The switch
   // replaces `files`, so the index can only be resolved on the render that
   // carries the new list.
-  const [pendingNavigatorFocus, setPendingNavigatorFocus] = useState<string | null>(null);
+  const [pendingNavigatorFocus, setPendingNavigatorFocus] = useState<{ path: string; pin: boolean } | null>(null);
   // First-run review-setup chooser (panel view + tree default diff).
   const [showReviewSetup, setShowReviewSetup] = useState(false);
   // The caller pinned this session's opening diff type and/or base (CLI
@@ -3074,7 +3074,7 @@ const ReviewApp: React.FC = () => {
       }
       // The focus is deferred: the switch replaces `files`, so the index only
       // exists on the render that carries the new list.
-      void fetchDiffSwitch(targetDiffType!).then(() => setPendingNavigatorFocus(selection.path));
+      void fetchDiffSwitch(targetDiffType!).then(() => setPendingNavigatorFocus({ path: selection.path, pin }));
       return;
     }
     if (isCommitDiffType(diffType)) {
@@ -3090,7 +3090,7 @@ const ReviewApp: React.FC = () => {
         },
       );
       void fetchDiffSwitch(target.diffType, target.base ?? undefined).then(() =>
-        setPendingNavigatorFocus(selection.path),
+        setPendingNavigatorFocus({ path: selection.path, pin }),
       );
       return;
     }
@@ -3109,10 +3109,15 @@ const ReviewApp: React.FC = () => {
   // Resolve a deferred focus once the switched-in file list has rendered.
   useEffect(() => {
     if (pendingNavigatorFocus === null) return;
-    const index = files.findIndex((f) => f.path === pendingNavigatorFocus);
+    const index = files.findIndex((f) => f.path === pendingNavigatorFocus.path);
+    const shouldPin = pendingNavigatorFocus.pin;
     setPendingNavigatorFocus(null);
-    if (index !== -1) handleFilePreview(index);
-  }, [pendingNavigatorFocus, files, handleFilePreview]);
+    if (index === -1) return;
+    // Carry the pin through the switch: a double-click that crossed a scope
+    // boundary must still open a pinned tab, not a preview.
+    if (shouldPin) handleFilePinned(index);
+    else handleFilePreview(index);
+  }, [pendingNavigatorFocus, files, handleFilePreview, handleFilePinned]);
 
   // Reload un-trap: the server keeps ONE session-global diff, so a page loaded
   // while a commit:<sha> diff is active is served that commit — with no
