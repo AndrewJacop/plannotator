@@ -34,7 +34,7 @@ import { PullRequestIcon } from '@plannotator/ui/components/PullRequestIcon';
 import { getPlatformLabel, getMRLabel, getMRNumberLabel, getDisplayRepo } from '@plannotator/shared/pr-types';
 import type { SemanticDiffAdvert } from '@plannotator/shared/semantic-diff-types';
 import type { CallFlowAdvert, CallFlowNode } from '@plannotator/shared/call-flow-types';
-import { configStore, useConfigValue, setReviewPanelView } from '@plannotator/ui/config';
+import { configStore, useConfigValue, setReviewNavigatorLayout, setReviewNavigatorGrouping } from '@plannotator/ui/config';
 import { loadDiffFont } from '@plannotator/ui/utils/diffFonts';
 import { getAgentSwitchSettings, getEffectiveAgentName } from '@plannotator/ui/utils/agentSwitch';
 import { useAIProviderConfig } from '@plannotator/ui/hooks/useAIProviderConfig';
@@ -98,7 +98,7 @@ import { ReviewAgentsIcon } from '@plannotator/ui/components/ReviewAgentsIcon';
 import { useSidebar } from '@plannotator/ui/hooks/useSidebar';
 import { useViewportEnvironment } from '@plannotator/ui/hooks/useViewportEnvironment';
 import { useCompactTouchLayout } from '@plannotator/ui/hooks/useIsMobile';
-import { FileTree } from './components/FileTree';
+import { ReviewNavigator } from './components/ReviewNavigator';
 import { StackedPRLabel } from './components/StackedPRLabel';
 import { PRSelector } from './components/PRSelector';
 import { PRSwitchOverlay } from './components/PRSwitchOverlay';
@@ -146,13 +146,16 @@ import {
 import type { DiffFile, AnnotationScrollTarget } from './types';
 import { annotationMatchesPrScope, proseAnnotationMatchesPr } from './utils/annotationScope';
 import type { DiffOption, WorktreeInfo, GitContext, SinceBaseSections, CommitDiffInfo } from '@plannotator/shared/types';
-import { SectionsPanel } from './components/SectionsPanel';
-import { CommitsPanel } from './components/CommitsPanel';
-import { useCommitsView } from './hooks/useCommitsView';
+import type { ReviewNavigatorGrouping } from '@plannotator/shared/review-navigator';
+import { useNavigatorCommits } from './hooks/useNavigatorCommits';
+import {
+  resolveEffectiveGrouping,
+  resolveGroupingCapability,
+  type NavigatorSelection,
+} from './utils/navigatorModel';
 import { ReviewSetupDialog } from './components/ReviewSetupDialog';
-import { initializeReviewSetup, markReviewSetupSeen, shouldOfferReviewSetup, shouldRepairPanelPair } from './utils/reviewSetup';
-import { resolvePanelView } from './utils/resolvePanelView';
-import { isCommitDiffType, resolveCommitExitDiff, type CommitViewRestoreTarget } from './utils/commitViewRestore';
+import { initializeReviewSetup, markReviewSetupSeen, shouldOfferReviewSetup } from './utils/reviewSetup';
+import { isCommitDiffType, resolveCommitExitDiff } from './utils/commitViewRestore';
 import { GuideIntroDialog } from './components/GuideIntroDialog';
 import { needsGuideIntro, markGuideIntroSeen, needsGuideHint, markGuideHintSeen } from './utils/guideIntro';
 import { EditModeAnnouncementDialog } from './components/EditModeAnnouncementDialog';
@@ -588,23 +591,36 @@ const ReviewApp: React.FC = () => {
   const callFlowAvailable = callFlowEnabled && callFlowAdvert.available;
   const { state: callFlowAnalysis, retry: retryCallFlowAnalysis } = useCallFlowAnalysis(snapshotId, callFlowAvailable);
   const [isFetchingBase, setIsFetchingBase] = useState(false);
-  // Which left panel is showing. The persisted value (Settings / first-run
-  // dialog, written through the coupled setters in config/reviewView)
-  // decides what a review OPENS on unless a last-used view is recorded; the
-  // header toggle is a session control layered over both — it NEVER writes
-  // the persisted view/diff pair. Changing the default is an explicit
-  // Settings/setup-dialog act, not a side effect of looking at another view
-  // mid-review; the toggle only records its choice as the last-used memo.
-  const persistedPanelView = useConfigValue('reviewPanelView');
-  const lastUsedPanelView = useConfigValue('reviewPanelViewLastUsed');
-  const [sessionPanelView, setSessionPanelView] = useState<'sections' | 'commits' | 'tree' | null>(null);
-  const panelView: 'sections' | 'commits' | 'tree' = sessionPanelView ?? lastUsedPanelView ?? persistedPanelView;
-  const selectPanelView = useCallback((view: 'sections' | 'commits' | 'tree') => {
-    setSessionPanelView(view);
-    // Commits is session-only by design (never an opening view), so it is
-    // never recorded — picking it leaves last-used at its previous value.
-    if (view !== 'commits') configStore.set('reviewPanelViewLastUsed', view);
-  }, []);
+  // The navigator's two independent display choices. Unlike the retired
+  // three-way panel view these live nowhere but the cookie: the controls are
+  // inside the panel, so "what I'm using now" and "what a review opens on" are
+  // the same question and need no session/last-used/persisted ladder. Neither
+  // is coupled to `defaultDiffType`.
+  const navigatorLayout = useConfigValue('reviewNavigatorLayout');
+  const navigatorGrouping = useConfigValue('reviewNavigatorGrouping');
+  // The session's WORKING diff — the file set and git-status sidecar the
+  // Staged/Unstaged sections describe. Snapshotted on every applied
+  // non-commit diff so those sections keep describing the working tree while
+  // a commit's own diff is on screen, and remembered as the restore target
+  // for a working-scope selection made from there.
+  const [workingSet, setWorkingSet] = useState<{
+    files: DiffFile[];
+    sections: SinceBaseSections | null;
+    diffType: string;
+    base: string | null;
+  } | null>(null);
+  const [expandedCommits, setExpandedCommits] = useState<ReadonlySet<string>>(() => new Set());
+  // Viewed marks for files reviewed INSIDE a commit. Session-only and separate
+  // from `viewedFiles` (which is the working scope's, draft-persisted) because
+  // viewed keys on (file, scope): the same path has a working-tree delta and a
+  // per-commit delta, and checking one off says nothing about the other.
+  const [commitViewedFiles, setCommitViewedFiles] = useState<ReadonlyMap<string, ReadonlySet<string>>>(
+    () => new Map(),
+  );
+  // A path to focus once a navigator-driven diff switch has landed. The switch
+  // replaces `files`, so the index can only be resolved on the render that
+  // carries the new list.
+  const [pendingNavigatorFocus, setPendingNavigatorFocus] = useState<string | null>(null);
   // First-run review-setup chooser (panel view + tree default diff).
   const [showReviewSetup, setShowReviewSetup] = useState(false);
   // The caller pinned this session's opening diff type and/or base (CLI
@@ -694,20 +710,11 @@ const ReviewApp: React.FC = () => {
     if (submitted) reviewHistory.clear();
   }, [reviewHistory, submitted]);
 
-  // The Commits view (linear history rail) exists for plain local git
-  // sessions only — PR/workspace/jj/p4 keep their existing panels. Unlike
-  // sections it has NO coupled diff: the review opens on the user's normal
-  // default until a commit is clicked, and the clicked sha is never persisted.
-  // Declared this early because the global keyboard handler consults it.
+  // Commit history (and with it the Committed section) exists for plain local
+  // git sessions only — PR/workspace/jj/GitButler/p4 have no first-parent walk
+  // the review server reads. Declared this early because the global keyboard
+  // handler consults it.
   const commitsCapable = !prMetadata && reviewMode !== 'workspace' && gitContext?.vcsType === 'git';
-  const showCommitsPanel = commitsCapable && panelView === 'commits';
-  // The diff the session was reviewing before the Commits view's commit
-  // clicks (or its HEAD auto-select) took over the single session-global
-  // diff — captured on the first non-commit → commit switch, restored when
-  // the panel view leaves Commits for the Tree, and cleared by any applied
-  // non-commit switch (see fetchDiffSwitch). Ref, not state: it never drives
-  // a render, and capture happens inside event handlers.
-  const preCommitDiffRef = useRef<CommitViewRestoreTarget | null>(null);
 
   const prStackCallbacksRef = useRef<import('./hooks/usePRStack').PRStackCallbacks | null>(null);
   const {
@@ -1901,7 +1908,7 @@ const ReviewApp: React.FC = () => {
         && shouldHandleReviewSearchShortcut(e.target, searchInputRef.current)
       ) {
         if (guideOpen) return;
-        if (hasSearchableFiles && !showCommitsPanel) {
+        if (hasSearchableFiles) {
           e.preventDefault();
           if (isCompactTouchLayout) setIsCompactNavigatorOpen(true);
           else setIsFileTreeOpen(true);
@@ -1966,7 +1973,7 @@ const ReviewApp: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showExportModal, showDestinationMenu, isSearchOpen, searchQuery, searchMatches, isSearchPending, openSearch, stepSearchMatch, clearSearch, closeSearch, aiUIEnabled, hasSearchableFiles, showCommitsPanel, reviewSidebar.isOpen, reviewSidebar.open, reviewSidebar.close, isFileTreeOpen, guideOpen, isCompactTouchLayout, isCompactNavigatorOpen, toggleNavigator]);
+  }, [showExportModal, showDestinationMenu, isSearchOpen, searchQuery, searchMatches, isSearchPending, openSearch, stepSearchMatch, clearSearch, closeSearch, aiUIEnabled, hasSearchableFiles, reviewSidebar.isOpen, reviewSidebar.open, reviewSidebar.close, isFileTreeOpen, guideOpen, isCompactTouchLayout, isCompactNavigatorOpen, toggleNavigator]);
 
 
   // Load diff content - try API first, fall back to demo
@@ -2072,6 +2079,17 @@ const ReviewApp: React.FC = () => {
         setSemanticDiffAvailable(data.semanticDiff?.available === true);
         if (data.callFlow) setCallFlowAdvert(data.callFlow);
         setSections(data.sections ?? null);
+        // Seed the navigator's working snapshot (see fetchDiffSwitch). The
+        // load-time snap-back below guarantees a commit diff never survives a
+        // reload, so the opening diff is always the working one.
+        if (!isCommitDiffType(data.diffType)) {
+          setWorkingSet({
+            files: apiFiles,
+            sections: data.sections ?? null,
+            diffType: data.diffType,
+            base: data.base ?? null,
+          });
+        }
         setCommitInfo(data.commitInfo ?? null);
         setGeneratedFiles(new Set(data.generatedFiles ?? []));
         setBaseBehindRemote(data.baseBehindRemote === true);
@@ -2087,7 +2105,7 @@ const ReviewApp: React.FC = () => {
         // repo where getGitContext omits it (trunk / no origin/HEAD), forcing
         // since-base would degrade to HEAD and hide committed work — the exact
         // case the offering guard avoids. There, leave the default alone and
-        // don't show the chooser. Matches the sectionsCapable gate used for the
+        // don't show the chooser. Matches the sinceBaseCapable gate used for the
         // header-menu reopen.
         const sinceBaseAvailable = !!data.gitContext?.diffOptions?.some(
           (o: { id: string }) => o.id === 'since-base',
@@ -2547,27 +2565,45 @@ const ReviewApp: React.FC = () => {
     [handleAutoViewReadingFile],
   );
 
-  // The three-stack sections panel exists only for the since-base composite
-  // view in a plain git session (PR/workspace keep the classic tree).
-  const sectionsAvailable = !!sections && activeDiffBase === 'since-base' && !prMetadata && reviewMode !== 'workspace';
-  // The sections view IS the since-base comparison — a repo that supports it
-  // shows the view toggle even while an advanced (tree) mode is active, and
-  // toggling back to Sections switches the diff back to since-base.
-  const sectionsCapable = !prMetadata && reviewMode !== 'workspace'
+  // Whether a caller-pinned session can still offer the first-run setup
+  // chooser — the composite since-base diff has to exist for its default to
+  // mean anything.
+  const sinceBaseCapable = !prMetadata && reviewMode !== 'workspace'
     && !!gitContext?.diffOptions?.some(option => option.id === 'since-base');
   const activeCommitSha = activeDiffBase.startsWith('commit:')
     ? activeDiffBase.slice('commit:'.length)
     : null;
 
-  // The view actually RENDERED for the current selection — a latent
-  // 'sections'/'commits' selection the session can't offer resolves to the
-  // tree, so the toggle highlights the panel on screen. Surfaces that render
-  // by view must read this, never the raw panelView.
-  const effectivePanelView = resolvePanelView(panelView, { sectionsAvailable, commitsCapable });
+  // Can this SESSION group by git status at all (index + working tree), and —
+  // separately — can the diff currently on screen be partitioned? A session
+  // that can't disables the segment with a reason; a diff that can't renders
+  // All with the reason on screen and keeps the selection for the next
+  // partitionable diff. Neither ever rewrites the setting.
+  const groupingCapability = useMemo(
+    () => resolveGroupingCapability({
+      isPR: !!prMetadata,
+      isWorkspace: reviewMode === 'workspace',
+      ...(gitContext?.vcsType ? { vcsType: gitContext.vcsType } : {}),
+    }),
+    [prMetadata, reviewMode, gitContext?.vcsType],
+  );
+  // While a commit's own diff is on screen the working snapshot is what the
+  // Staged/Unstaged sections describe, so the sidecar it carries is what
+  // decides whether grouping can render.
+  const navigatorSections = activeCommitSha ? workingSet?.sections ?? null : sections;
+  const navigatorWorkingFiles = activeCommitSha ? workingSet?.files ?? [] : files;
+  const { grouping: effectiveGrouping, fallbackReason: groupingFallbackReason } = useMemo(
+    () => resolveEffectiveGrouping({
+      selected: navigatorGrouping,
+      capability: groupingCapability,
+      hasSections: !!navigatorSections,
+    }),
+    [navigatorGrouping, groupingCapability, navigatorSections],
+  );
 
-  // The all-files surface mirrors whichever left panel is showing: sections
-  // order when the sections view is active, tree order otherwise.
-  const allFilesOrder: 'tree' | 'list' = effectivePanelView === 'sections' ? 'list' : 'tree';
+  // The all-files surface mirrors the navigator's layout: the flat layout is a
+  // plain list, the tree layout groups by directory.
+  const allFilesOrder: 'tree' | 'list' = navigatorLayout === 'flat' ? 'list' : 'tree';
 
   // Git add/staging logic
   const handleFileViewedFromStage = useCallback(
@@ -2787,7 +2823,6 @@ const ReviewApp: React.FC = () => {
       // never reaches this clear, so a stale response can't drop a memo a
       // newer commit switch still needs — correct by construction. Failed
       // switches never get here either, keeping the memo for a later retry.
-      if (!isCommitDiffType(data.diffType)) preCommitDiffRef.current = null;
       setSnapshotId(data.snapshotId);
       // Session-constant in practice, but re-read from any payload that
       // carries it so the client stays in lockstep with whatever it last
@@ -2829,6 +2864,19 @@ const ReviewApp: React.FC = () => {
       applySemanticDiffAdvert(data.semanticDiff);
       applyCallFlowAdvert(data.callFlow);
       setSections(data.sections ?? null);
+      // Remember the session's working diff. The navigator's Staged/Unstaged
+      // sections keep describing THIS while a commit's own diff is on screen,
+      // and a working-scope selection made from there restores exactly it —
+      // which is why the snapshot carries the diff type and base, not just the
+      // files. A commit switch deliberately leaves the snapshot alone.
+      if (!isCommitDiffType(data.diffType)) {
+        setWorkingSet({
+          files: nextFiles,
+          sections: data.sections ?? null,
+          diffType: data.diffType,
+          base: data.base ?? selectedBase,
+        });
+      }
       setCommitInfo(data.commitInfo ?? null);
       setGeneratedFiles(new Set(data.generatedFiles ?? []));
       setBaseBehindRemote(data.baseBehindRemote === true);
@@ -2952,176 +3000,149 @@ const ReviewApp: React.FC = () => {
     await fetchDiffSwitch(fullDiffType, baseOverride);
   }, [diffType, activeWorktreePath, fetchDiffSwitch, gitContext]);
 
-  // Toggling to Sections means "show me the since-base review" — if another
-  // mode is active, switch the LIVE diff back along with the view. No writes
-  // to the persisted view/diff pair: the toggle only records the last-used
-  // memo (via selectPanelView), so there is no pair to keep consistent here
-  // (Settings and the setup dialog, which do persist, enforce the
-  // sections ⟺ since-base coupling via the shared setters in
-  // config/reviewView).
-  const handleSwitchToSections = useCallback(() => {
-    selectPanelView('sections');
-    if (activeDiffBase !== 'since-base') void handleDiffSwitch('since-base');
-  }, [selectPanelView, activeDiffBase, handleDiffSwitch]);
+  // Selecting "By Git status" asks for the composite working-state diff, which
+  // is the only one the server partitions — so it brings the LIVE diff along
+  // when a classic diff is active, exactly as the retired Git status segment
+  // did. It never persists a diff default, and it never touches the layout.
+  const handleSelectGrouping = useCallback((next: ReviewNavigatorGrouping) => {
+    setReviewNavigatorGrouping(next);
+    if (next === 'status' && sinceBaseCapable && activeDiffBase !== 'since-base') {
+      void handleDiffSwitch('since-base');
+    }
+  }, [sinceBaseCapable, activeDiffBase, handleDiffSwitch]);
 
-  // Unified toggle handler for all three panel views. Sections carries a
-  // diff coupling (it can render nothing but since-base); Commits switches
-  // the view alone (its session machine then owns the diff via commit
-  // clicks / HEAD auto-select); and Tree restores the pre-Commits diff when
-  // it's the exit from the Commits view — the commit click hijacked the
-  // single session-global diff, so leaving the view brings back what the
-  // session was reviewing before. Outside that exit, Tree still leaves the
-  // active diff as-is (it can render any diff).
-  const handlePanelViewSelect = useCallback((view: 'sections' | 'commits' | 'tree') => {
-    if (view === 'commits') {
-      // The Commits rail has no search input, so an open search would become
-      // hidden-but-live: the query keeps matching, marks keep rendering, and
-      // Enter keeps stepping matches with no way to see or edit any of it.
-      // Entering the view ends the search session cleanly.
-      if (searchQuery) clearSearch();
-      if (isSearchOpen) closeSearch();
-    }
-    if (view === 'sections') {
-      handleSwitchToSections();
-      return;
-    }
-    if (
-      view === 'tree' && panelView === 'commits' &&
-      // A commit diff on screen is the normal exit. The in-flight arm covers
-      // exiting while a commit switch (typically the HEAD auto-select right
-      // after entry) hasn't landed yet — the memo is captured synchronously
-      // before that fetch, so memo + loading means a commit diff is inbound;
-      // issuing the restore now supersedes it server-side (epoch guard) and
-      // its stale body is ignored client-side.
-      (isCommitDiffType(diffType) || (isLoadingDiff && preCommitDiffRef.current !== null))
-    ) {
-      // Restore through fetchDiffSwitch with the memo's FULL diff type (not
-      // handleDiffSwitch, which would re-compose the current worktree prefix
-      // over an already-composed one). No memo — the page reloaded while a
-      // commit diff was active; refs don't survive — falls back to the
-      // session default, same resolution handleWorktreeSwitch applies. A
-      // failed switch keeps the commit diff on screen with the normal
-      // diffError and the memo intact (no retry loop; the next exit — or a
-      // manual picker switch — is the recovery path).
-      const target = resolveCommitExitDiff(preCommitDiffRef.current, {
-        preferredDefault: configStore.get('defaultDiffType'),
-        diffOptions: gitContext?.diffOptions ?? [],
-        activeWorktreePath,
-      });
-      void fetchDiffSwitch(target.diffType, target.base ?? undefined);
-    }
-    selectPanelView(view);
-  }, [handleSwitchToSections, selectPanelView, searchQuery, isSearchOpen, clearSearch, closeSearch, panelView, diffType, isLoadingDiff, gitContext, activeWorktreePath, fetchDiffSwitch]);
-
-  // Open a commit's own diff (vs its first parent) in the center dock. The
-  // switch resets the dock to the all-files surface via the existing
-  // needsInitialDiffPanel flow; re-clicking the active commit just re-focuses
-  // that panel (e.g. after the user closed the tab).
-  const handleSelectCommit = useCallback((sha: string) => {
-    // Compose the worktree prefix ONCE and use it for both the re-click check
-    // and the switch itself (going through handleDiffSwitch would compose it
-    // a second time in a second place — fragile duplication for no benefit;
-    // its evolog base handling never applies to commit diffs).
-    const fullDiffType = activeWorktreePath
-      ? `worktree:${activeWorktreePath}:commit:${sha}`
-      : `commit:${sha}`;
-    if (fullDiffType === diffType) {
-      openAllFilesPanel();
-      return;
-    }
-    // First entry into the commit family (covers both user clicks and the
-    // HEAD auto-select, which routes through this same handler): remember the
-    // diff the session came from so leaving the Commits view can restore it.
-    // Walking further commits must not overwrite the memo with another commit
-    // diff — the exit target is where the REVIEW was, not the previous stop
-    // on the rail. A capture whose switch then fails or is superseded leaves
-    // a memo with no commit diff active; harmless, since the memo is only
-    // read while one is, and re-entry recaptures over it.
-    if (!isCommitDiffType(diffType)) {
-      preCommitDiffRef.current = { diffType, base: selectedBase };
-    }
-    void fetchDiffSwitch(fullDiffType);
-  }, [activeWorktreePath, diffType, selectedBase, fetchDiffSwitch, openAllFilesPanel]);
-
-  // The Commits-view session machine (log + poll + HEAD auto-select + center
-  // veil) lives in the hook so its invariants stay in one file; App supplies
-  // the pieces it owns — visibility, the active commit, switch state, and the
-  // open-a-commit path (the SAME one user clicks take).
-  const commitsView = useCommitsView({
-    enabled: showCommitsPanel && !!origin,
-    // Worktree and base changes re-anchor the history/divider; commit clicks
-    // deliberately don't (paging state survives them).
+  // The Committed section's data layer. Paging survives reviewing a commit, so
+  // the context key deliberately excludes the selection.
+  const navigatorCommits = useNavigatorCommits({
+    enabled: commitsCapable && effectiveGrouping === 'status' && !!origin,
     contextKey: `${activeWorktreePath ?? ''}|${committedBase ?? ''}`,
-    activeCommitSha,
-    isLoadingDiff,
-    diffError,
-    onOpenCommit: handleSelectCommit,
   });
+  const { loadCommitFiles } = navigatorCommits;
 
-  // Reload un-trap: the server keeps ONE session-global diff, so a page
-  // loaded while a commit:<sha> diff is active is served that commit — but
-  // the opening panel view is never Commits (deliberately not persisted, and
-  // the restore memo above is client memory that didn't survive either), so
-  // the session would open on the tree stuck showing a historical commit
-  // with no marked picker option and no restore path. Snap it back to the
-  // session default once, on load only — a commit diff the USER opens later
-  // in this session must never be snapped, hence the one-shot ref that burns
-  // on the first settled load regardless of what it observed.
+  const handleToggleCommit = useCallback((sha: string) => {
+    setExpandedCommits((prev) => {
+      const next = new Set(prev);
+      if (next.has(sha)) next.delete(sha);
+      else {
+        next.add(sha);
+        // Files are fetched on first expand only — a commit's diff is
+        // immutable, so the result is cached for the session.
+        loadCommitFiles(sha);
+      }
+      return next;
+    });
+  }, [loadCommitFiles]);
+
+  const handleToggleViewedInCommit = useCallback((sha: string, path: string) => {
+    setCommitViewedFiles((prev) => {
+      const next = new Map(prev);
+      const set = new Set(next.get(sha) ?? []);
+      if (set.has(path)) set.delete(path);
+      else set.add(path);
+      next.set(sha, set);
+      return next;
+    });
+  }, []);
+  const isViewedInCommit = useCallback(
+    (sha: string, path: string) => commitViewedFiles.get(sha)?.has(path) ?? false,
+    [commitViewedFiles],
+  );
+
+  /**
+   * The navigator's single selection path: a (scope, path) pair drives the
+   * centre diff. There is no mode to enter or leave — picking a file inside a
+   * commit row scopes the review to `commit:<sha>`, and picking any
+   * working-scope row brings the session's working diff back.
+   */
+  const handleNavigatorSelect = useCallback((selection: NavigatorSelection, pin = false) => {
+    const targetDiffType =
+      selection.scope.kind === 'commit'
+        ? (activeWorktreePath
+            ? `worktree:${activeWorktreePath}:commit:${selection.scope.sha}`
+            : `commit:${selection.scope.sha}`)
+        : null;
+    const open = () => {
+      const index = files.findIndex((f) => f.path === selection.path);
+      if (index === -1) return;
+      if (pin) handleFilePinned(index);
+      else handleFilePreview(index);
+    };
+    if (selection.scope.kind === 'commit') {
+      if (targetDiffType === diffType) {
+        open();
+        return;
+      }
+      // The focus is deferred: the switch replaces `files`, so the index only
+      // exists on the render that carries the new list.
+      void fetchDiffSwitch(targetDiffType!).then(() => setPendingNavigatorFocus(selection.path));
+      return;
+    }
+    if (isCommitDiffType(diffType)) {
+      // Back to the session's working diff — restored from the snapshot the
+      // last applied non-commit switch left, or the session default when a
+      // reload lost it (same resolution handleWorktreeSwitch applies).
+      const target = resolveCommitExitDiff(
+        workingSet ? { diffType: workingSet.diffType, base: workingSet.base } : null,
+        {
+          preferredDefault: configStore.get('defaultDiffType'),
+          diffOptions: gitContext?.diffOptions ?? [],
+          activeWorktreePath,
+        },
+      );
+      void fetchDiffSwitch(target.diffType, target.base ?? undefined).then(() =>
+        setPendingNavigatorFocus(selection.path),
+      );
+      return;
+    }
+    open();
+  }, [
+    activeWorktreePath,
+    diffType,
+    files,
+    handleFilePinned,
+    handleFilePreview,
+    fetchDiffSwitch,
+    workingSet,
+    gitContext,
+  ]);
+
+  // Resolve a deferred focus once the switched-in file list has rendered.
+  useEffect(() => {
+    if (pendingNavigatorFocus === null) return;
+    const index = files.findIndex((f) => f.path === pendingNavigatorFocus);
+    setPendingNavigatorFocus(null);
+    if (index !== -1) handleFilePreview(index);
+  }, [pendingNavigatorFocus, files, handleFilePreview]);
+
+  // Reload un-trap: the server keeps ONE session-global diff, so a page loaded
+  // while a commit:<sha> diff is active is served that commit — with no
+  // working snapshot to build the Staged/Unstaged sections from and no client
+  // memory of where the review was. Snap it back to the session default once,
+  // on load only; a commit the reviewer opens later in this session must never
+  // be snapped, hence the one-shot ref that burns on the first settled load
+  // regardless of what it observed.
   //
   // Deliberately NOT gated on openStatePinned: `--diff-type` does not accept
-  // commit:<sha> in v1, so a pinned session can never be serving a commit
-  // diff on load. If v1.1 ever adds commit:<sha> to the accepted open states,
-  // this snap-back would clobber the flag — re-gate it then.
+  // commit:<sha>, so a pinned session can never be serving a commit diff on
+  // load. If that ever changes, re-gate it.
   const snappedCommitDiffOnLoad = useRef(false);
   useEffect(() => {
     if (snappedCommitDiffOnLoad.current || isLoading || !diffData) return;
     snappedCommitDiffOnLoad.current = true;
     if (!isCommitDiffType(diffType)) return;
-    if (panelView === 'commits') return; // defensive: unreachable on load
     const target = resolveCommitExitDiff(null, {
       preferredDefault: configStore.get('defaultDiffType'),
       diffOptions: gitContext?.diffOptions ?? [],
       activeWorktreePath,
     });
     void fetchDiffSwitch(target.diffType);
-  }, [isLoading, diffData, diffType, panelView, gitContext, activeWorktreePath, fetchDiffSwitch]);
+  }, [isLoading, diffData, diffType, gitContext, activeWorktreePath, fetchDiffSwitch]);
 
-  // Self-heal a conflicted persisted pair: reviewPanelView=sections with a
-  // non-since-base defaultDiffType. Every UI writer enforces the coupling
-  // (sections ⟺ since-base), but configStore.init() applies config.json over
-  // the cookie WITHOUT it — so a stale server value (a debounced write lost
-  // when a session closed, or a pre-feature config file) re-corrupts the pair
-  // on every load: the server opens on the stale diff in the classic tree
-  // while the cookie still says Git status. Trust the view choice, repair the
-  // diff default (cookie + config.json), and bring the live session along.
-  // Keyed to persistedPanelView, NEVER the live panelView: the header toggle
-  // is session-only and must not be able to trigger a settings write, even
-  // indirectly through this repair. Only a pair that Settings / the setup
-  // dialog / an old config file actually PERSISTED conflicted gets healed.
-  const healedPanelPairOnLoad = useRef(false);
-  useEffect(() => {
-    if (healedPanelPairOnLoad.current || isLoading || !diffData) return;
-    // shouldRepairPanelPair bails ENTIRELY for a caller-pinned session (not
-    // just the diff-switch leg): the repair's other half is a config.json
-    // write, and a flagged session must not cause a settings write it would
-    // not otherwise cause. First-run resets + applies the pair itself (on
-    // dialog dismiss).
-    if (
-      !shouldRepairPanelPair({
-        openStatePinned,
-        sectionsCapable,
-        isFirstRunSetup: reviewSetupIsFirstRun.current,
-        persistedPanelView,
-        defaultDiffType: configStore.get('defaultDiffType'),
-      })
-    ) return;
-    healedPanelPairOnLoad.current = true;
-    // Re-assert the pair through the coupled setter (repairs cookie +
-    // config.json), then bring the live session along. This is a repair,
-    // not a user choice — it must not overwrite the last-used memo.
-    setReviewPanelView('sections', { recordLastUsed: false });
-    if (activeDiffBase !== 'since-base') void handleDiffSwitch('since-base');
-  }, [isLoading, diffData, sectionsCapable, persistedPanelView, activeDiffBase, handleDiffSwitch, openStatePinned]);
+  // (The old panel-pair self-heal lived here. It repaired a conflicted
+  // `reviewPanelView` / `defaultDiffType` pair that configStore.init() could
+  // recreate from a stale config.json. The navigator's layout and grouping are
+  // coupled to nothing, so no conflicted pair can exist and there is nothing
+  // to heal.)
 
   // Switch worktree context (or back to main repo). Preserves the current
   // diff mode across the switch — if the reviewer was looking at "PR Diff"
@@ -3231,9 +3252,10 @@ const ReviewApp: React.FC = () => {
     // file they were reading; contentRefresh licenses Rule 5, because here a
     // per-path patch delta really is the content having changed underneath.
     void fetchDiffSwitch(diffType, selectedBase, { preserveFile: true, contentRefresh: true });
-    // New commits are part of what went stale — bring the rail along.
-    if (showCommitsPanel) commitsView.refresh();
-  }, [prMetadata, prDiffScope, prPatchIncomplete, handlePRDiffScopeSelect, handleLoadFullDiff, fetchDiffSwitch, diffType, selectedBase, showCommitsPanel, commitsView.refresh]);
+    // New commits are part of what went stale — bring the Committed section
+    // along.
+    if (commitsCapable) navigatorCommits.refresh();
+  }, [prMetadata, prDiffScope, prPatchIncomplete, handlePRDiffScopeSelect, handleLoadFullDiff, fetchDiffSwitch, diffType, selectedBase, commitsCapable, navigatorCommits.refresh]);
 
   // Select annotation - switches file if needed and scrolls to it.
   // isAllFilesActive is read through the ref (declared with the state): this
@@ -4901,7 +4923,7 @@ const ReviewApp: React.FC = () => {
 
             <ReviewHeaderMenu
               onOpenSettings={() => setOpenSettingsMenu(true)}
-              onOpenReviewSetup={sectionsCapable ? () => { reviewSetupIsFirstRun.current = false; setShowReviewSetup(true); } : undefined}
+              onOpenReviewSetup={sinceBaseCapable ? () => { reviewSetupIsFirstRun.current = false; setShowReviewSetup(true); } : undefined}
               onOpenExport={() => setShowExportModal(true)}
               onCopyAgentInstructions={handleCopyAgentInstructions}
               onToggleFileTree={toggleNavigator}
@@ -4998,57 +5020,71 @@ const ReviewApp: React.FC = () => {
 
         {/* Main content */}
         <div className={`relative flex-1 flex overflow-hidden ${isResizing ? 'select-none' : ''}`}>
-          {!guideOpen && shouldShowFileTree && isNavigatorOpen && sectionsAvailable && panelView === 'sections' && (
+          {!guideOpen && shouldShowFileTree && isNavigatorOpen && (
             <ReviewNavigatorContainer
               isCompactTouchLayout={isCompactTouchLayout}
               onClose={() => setIsCompactNavigatorOpen(false)}
               context={compactNavigatorContext}
               resizeHandle={fileTreeResizeHandle}
             >
-              <SectionsPanel
+              <ReviewNavigator
                 files={files}
-                sections={sections!}
-                width={fileTreeResize.width}
-                activeFileIndex={isAllFilesActive || isSemanticDiffActive || isCallFlowActive || isPROverviewActive ? -1 : activeFileIndex}
-                scrollHighlightIndex={isAllFilesActive && allFilesVisibleFile ? files.findIndex(f => f.path === allFilesVisibleFile) : undefined}
-                onSelectFile={(index) => completeNavigatorSelection(() => handleFilePreview(index))}
-                onDoubleClickFile={(index) => completeNavigatorSelection(() => handleFilePinned(index))}
+                workingFiles={navigatorWorkingFiles}
+                sections={navigatorSections}
+                layout={navigatorLayout}
+                grouping={navigatorGrouping}
+                onSelectLayout={setReviewNavigatorLayout}
+                onSelectGrouping={handleSelectGrouping}
+                groupingDisabledReason={groupingCapability.available ? undefined : groupingCapability.reason}
+                groupingFallbackReason={groupingFallbackReason || undefined}
+                activeSelection={
+                  isAllFilesActive || isSemanticDiffActive || isCallFlowActive || isPROverviewActive || isPRArtifactsActive
+                    ? null
+                    : files[activeFileIndex]
+                      ? {
+                          scope: activeCommitSha ? { kind: 'commit', sha: activeCommitSha } : { kind: 'working' },
+                          path: files[activeFileIndex].path,
+                        }
+                      : null
+                }
+                scrollHighlightPath={isAllFilesActive ? allFilesVisibleFile : null}
+                onSelectFile={(selection) => completeNavigatorSelection(() => handleNavigatorSelect(selection))}
+                onDoubleClickFile={(selection) => completeNavigatorSelection(() => handleNavigatorSelect(selection, true))}
                 enableKeyboardNav={!showExportModal && hasSearchableFiles}
                 annotations={allAnnotations}
                 viewedFiles={viewedFiles}
                 onToggleViewed={handleToggleViewed}
+                isViewedInCommit={isViewedInCommit}
+                onToggleViewedInCommit={handleToggleViewedInCommit}
                 hideViewedFiles={hideViewedFiles}
                 onToggleHideViewed={() => setHideViewedFiles(prev => !prev)}
                 showViewedControls={reviewShowViewedControls}
                 onToggleShowViewedControls={handleToggleReviewViewedControls}
+                diffOptions={reviewMode === 'workspace' ? (workspaceDiffOptions ?? undefined) : gitContext?.diffOptions}
+                activeDiffType={activeDiffBase}
+                onSelectDiff={(nextDiffType) => completeNavigatorSelection(() => handleDiffSwitch(nextDiffType))}
+                isLoadingDiff={isLoadingDiff}
+                width={fileTreeResize.width}
+                worktrees={gitContext?.worktrees}
+                activeWorktreePath={activeWorktreePath}
+                onSelectWorktree={(path) => completeNavigatorSelection(() => handleWorktreeSwitch(path))}
+                currentBranch={gitContext?.currentBranch}
+                availableBranches={prMetadata ? undefined : gitContext?.availableBranches}
+                selectedBase={prMetadata ? undefined : selectedBase ?? undefined}
+                detectedBase={prMetadata ? undefined : gitContext?.defaultBranch || gitContext?.compareTarget?.fallback}
+                onSelectBase={prMetadata ? undefined : (base) => completeNavigatorSelection(() => handleBaseSelect(base))}
+                compareTarget={gitContext?.compareTarget}
+                recentCommits={prMetadata ? undefined : gitContext?.recentCommits}
+                jjEvologs={prMetadata ? undefined : gitContext?.jjEvologs}
+                detectedEvoBase={prMetadata ? undefined : gitContext?.jjEvologs?.[1]?.commitId}
                 stagedFiles={stagedFiles}
                 stagingFile={stagingFile}
                 canStage={canStageFiles}
-                onStageFile={stageFile}
+                onStageFile={canStageFiles ? stageFile : undefined}
                 showStageControls={reviewShowStageControls}
                 onToggleShowStageControls={handleToggleReviewStageControls}
                 autoViewed={autoViewedEnabled}
                 onToggleAutoViewed={handleToggleAutoViewed}
-                isLoadingDiff={isLoadingDiff}
-                availableBranches={gitContext?.availableBranches}
-                selectedBase={selectedBase ?? undefined}
-                detectedBase={gitContext?.defaultBranch || gitContext?.compareTarget?.fallback}
-                onSelectBase={(base) => completeNavigatorSelection(() => handleBaseSelect(base))}
-                compareTarget={gitContext?.compareTarget}
-                recentCommits={gitContext?.recentCommits}
-                onSelectPanelView={handlePanelViewSelect}
-                showCommitsOption={commitsCapable}
-                onSelectAllFiles={() => completeNavigatorSelection(openAllFilesPanel)}
-                isAllFilesActive={isAllFilesActive}
-                onSelectSemanticDiff={() => completeNavigatorSelection(openSemanticDiffPanel)}
-                isSemanticDiffActive={isSemanticDiffActive}
-                semanticDiffAvailable={semanticDiffUsable}
-                onSelectCallFlow={() => completeNavigatorSelection(openCallFlowPanel)}
-                isCallFlowActive={isCallFlowActive}
-                callFlowEnabled={callFlowEnabled}
-                callFlowCount={callFlowAnalysis.status === 'ready' ? callFlowAnalysis.data.summary.changedNodes : undefined}
-                callFlowLoading={callFlowNavLoading}
-                callFlowError={callFlowNavError}
                 onCopyRawDiff={handleCopyDiff}
                 canCopyRawDiff={!!diffData?.rawPatch}
                 copyRawDiffStatus={copyRawDiffStatus}
@@ -5065,42 +5101,6 @@ const ReviewApp: React.FC = () => {
                 activeSearchMatchId={hasSearchableFiles ? activeSearchMatchId : null}
                 onSelectSearchMatch={hasSearchableFiles ? (match) => completeNavigatorSelection(() => handleSelectSearchMatch(match)) : undefined}
                 onStepSearchMatch={hasSearchableFiles ? stepSearchMatch : undefined}
-              />
-            </ReviewNavigatorContainer>
-          )}
-          {!guideOpen && shouldShowFileTree && isNavigatorOpen && showCommitsPanel && (
-            <ReviewNavigatorContainer
-              isCompactTouchLayout={isCompactTouchLayout}
-              onClose={() => setIsCompactNavigatorOpen(false)}
-              resizeHandle={fileTreeResizeHandle}
-            >
-              <CommitsPanel
-                width={fileTreeResize.width}
-                commits={commitsView.commits}
-                base={commitsView.base}
-                hasMore={commitsView.hasMore}
-                isLoading={commitsView.isLoading}
-                isLoadingMore={commitsView.isLoadingMore}
-                error={commitsView.error}
-                activeCommitSha={activeCommitSha}
-                onSelectCommit={(sha) => completeNavigatorSelection(() => handleSelectCommit(sha))}
-                onShowMore={commitsView.showMore}
-                onRetry={commitsView.refresh}
-                onSelectPanelView={handlePanelViewSelect}
-                showSectionsOption={sectionsCapable}
-              />
-            </ReviewNavigatorContainer>
-          )}
-          {!guideOpen && shouldShowFileTree && isNavigatorOpen && !(sectionsAvailable && panelView === 'sections') && !showCommitsPanel && (
-            <ReviewNavigatorContainer
-              isCompactTouchLayout={isCompactTouchLayout}
-              onClose={() => setIsCompactNavigatorOpen(false)}
-              context={compactNavigatorContext}
-              resizeHandle={fileTreeResizeHandle}
-            >
-              <FileTree
-                files={files}
-                activeFileIndex={activeFileIndex}
                 onSelectPROverview={() => completeNavigatorSelection(openPROverviewPanel)}
                 isPROverviewActive={isPROverviewActive}
                 prOverviewNumber={prMetadata ? mrNumberLabel : undefined}
@@ -5119,63 +5119,23 @@ const ReviewApp: React.FC = () => {
                 callFlowError={callFlowNavError}
                 onSelectAllFiles={() => completeNavigatorSelection(openAllFilesPanel)}
                 isAllFilesActive={isAllFilesActive}
-                scrollHighlightIndex={isAllFilesActive && allFilesVisibleFile ? files.findIndex(f => f.path === allFilesVisibleFile) : undefined}
-                onSelectFile={(index) => completeNavigatorSelection(() => handleFilePreview(index))}
-                onDoubleClickFile={(index) => completeNavigatorSelection(() => handleFilePinned(index))}
-                annotations={allAnnotations}
-                viewedFiles={viewedFiles}
-                onToggleViewed={handleToggleViewed}
-                hideViewedFiles={hideViewedFiles}
-                onToggleHideViewed={() => setHideViewedFiles(prev => !prev)}
-                showViewedControls={reviewShowViewedControls}
-                onToggleShowViewedControls={handleToggleReviewViewedControls}
-                enableKeyboardNav={!showExportModal && hasSearchableFiles}
-                diffOptions={reviewMode === 'workspace' ? (workspaceDiffOptions ?? undefined) : gitContext?.diffOptions}
-                activeDiffType={activeDiffBase}
-                onSelectDiff={(diffType) => completeNavigatorSelection(() => handleDiffSwitch(diffType))}
-                isLoadingDiff={isLoadingDiff}
-                width={fileTreeResize.width}
-                worktrees={gitContext?.worktrees}
-                activeWorktreePath={activeWorktreePath}
-                onSelectWorktree={(path) => completeNavigatorSelection(() => handleWorktreeSwitch(path))}
-                currentBranch={gitContext?.currentBranch}
-                availableBranches={prMetadata ? undefined : gitContext?.availableBranches}
-                selectedBase={prMetadata ? undefined : selectedBase ?? undefined}
-                detectedBase={prMetadata ? undefined : gitContext?.defaultBranch || gitContext?.compareTarget?.fallback}
-                onSelectBase={prMetadata ? undefined : (base) => completeNavigatorSelection(() => handleBaseSelect(base))}
-                compareTarget={gitContext?.compareTarget}
-                recentCommits={prMetadata ? undefined : gitContext?.recentCommits}
-                jjEvologs={prMetadata ? undefined : gitContext?.jjEvologs}
-                detectedEvoBase={prMetadata ? undefined : gitContext?.jjEvologs?.[1]?.commitId}
-                stagedFiles={stagedFiles}
-                showStageControls={reviewShowStageControls}
-                onToggleShowStageControls={handleToggleReviewStageControls}
-                autoViewed={autoViewedEnabled}
-                onToggleAutoViewed={handleToggleAutoViewed}
-                onCopyRawDiff={handleCopyDiff}
-                canCopyRawDiff={!!diffData?.rawPatch}
-                copyRawDiffStatus={copyRawDiffStatus}
-                searchQuery={hasSearchableFiles ? searchQuery : ''}
-                isSearchOpen={hasSearchableFiles ? isSearchOpen : false}
-                isSearchPending={isSearchPending}
-                searchInputRef={hasSearchableFiles ? searchInputRef : undefined}
-                onOpenSearch={hasSearchableFiles ? openSearch : undefined}
-                onSearchChange={hasSearchableFiles ? handleSearchInputChange : undefined}
-                onSearchClear={hasSearchableFiles ? clearSearch : undefined}
-                onSearchClose={hasSearchableFiles ? closeSearch : undefined}
-                searchGroups={hasSearchableFiles ? searchGroups : []}
-                searchMatches={hasSearchableFiles ? searchMatches : []}
-                activeSearchMatchId={hasSearchableFiles ? activeSearchMatchId : null}
-                onSelectSearchMatch={hasSearchableFiles ? (match) => completeNavigatorSelection(() => handleSelectSearchMatch(match)) : undefined}
-                onStepSearchMatch={hasSearchableFiles ? stepSearchMatch : undefined}
                 repoRoot={prMetadata ? null : (activeWorktreePath ?? agentCwd ?? gitContext?.cwd ?? null)}
-                panelView={effectivePanelView}
-                onSwitchToSections={sectionsCapable ? handleSwitchToSections : undefined}
-                onSwitchToCommits={commitsCapable ? () => handlePanelViewSelect('commits') : undefined}
-                onSwitchToTree={() => handlePanelViewSelect('tree')}
-                sinceBaseSections={activeDiffBase === 'since-base' ? sections : null}
-                onStageFile={canStageFiles ? stageFile : undefined}
-                stagingFile={stagingFile}
+                {...(commitsCapable
+                  ? {
+                      commits: navigatorCommits.commits,
+                      commitsBase: navigatorCommits.base,
+                      commitsHasMore: navigatorCommits.hasMore,
+                      commitsLoading: navigatorCommits.isLoading,
+                      commitsLoadingMore: navigatorCommits.isLoadingMore,
+                      commitsError: navigatorCommits.error,
+                      onShowMoreCommits: navigatorCommits.showMore,
+                      onRetryCommits: navigatorCommits.refresh,
+                      expandedCommits,
+                      onToggleCommit: handleToggleCommit,
+                      commitFiles: navigatorCommits.commitFiles,
+                      onRetryCommitFiles: (sha: string) => navigatorCommits.loadCommitFiles(sha, { force: true }),
+                    }
+                  : {})}
               />
             </ReviewNavigatorContainer>
           )}
@@ -5209,23 +5169,10 @@ const ReviewApp: React.FC = () => {
             inert={isCompactTransientSurfaceOpen || undefined}
             aria-hidden={isCompactTransientSurfaceOpen || undefined}
           >
-            {/* Commit navigation veil: while a commit switch is in flight (or
-                the view was just entered and HEAD auto-select hasn't landed),
-                cover the stale previous diff instead of letting it sit there
-                and then jump — the rail click reads as immediate. All terminal
-                states (switch error, log error, empty history) drop the veil —
-                see useCommitsView's veilActive. */}
-            {commitsView.veilActive && (
-              <div className="absolute inset-0 z-20 bg-background/95 flex items-center justify-center">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  Loading commit…
-                </div>
-              </div>
-            )}
+            {/* (The Commits view's centre veil lived here. It covered the
+                stale diff while that mode auto-opened HEAD on entry; the
+                navigator only switches diffs on an explicit selection, which
+                the normal loading state already covers.) */}
             <ConfirmDialog
               isOpen={!!draftBanner}
               onClose={dismissDraft}
@@ -5425,7 +5372,7 @@ const ReviewApp: React.FC = () => {
             // nothing — the preference isn't about them.
             sinceBaseUnavailable={
               !!gitContext && gitContext.vcsType === 'git' && !prMetadata &&
-              reviewMode !== 'workspace' && !sectionsCapable
+              reviewMode !== 'workspace' && !sinceBaseCapable
             }
             // The compact shell renders a session-only unified diff, so the
             // Display tab hides the Split/Unified control rather than writing
