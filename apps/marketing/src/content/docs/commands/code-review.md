@@ -153,7 +153,7 @@ The standalone GitButler CLI installer supports macOS and Linux. On Windows, ins
 
 The review UI shows your changes in a familiar diff format:
 
-- **Left panel views** — a `Git status | Tree | Commits` toggle in the header (see below)
+- **The review navigator** — one file panel with independent **File layout** and **Grouping** controls (see below)
 - **Viewed tracking** to mark files as reviewed and track your progress
 - **Unified diff** showing additions and deletions in context
 - **Annotation tools** with the same annotation types as plan review (delete, comment, quick label, "looks good")
@@ -195,13 +195,30 @@ For working-tree modes, Plannotator creates temporary synthetic Git commits from
 
 Call Flow is syntactic and does not resolve types, imports, runtime dispatch, or data flow. It currently requires a local Git checkout and is unavailable for multi-repository workspace reviews, GitButler committed views, jj, P4, and the baseline-free All Files mode.
 
-### Panel views
+### The review navigator
 
-The left panel has three views. The header toggle is session-scoped — glancing at another view never changes your saved default (that's a Settings / setup-dialog decision).
+The left panel is one surface with two independent controls, under the base-reference selector:
 
-- **Git status** (default) — your changes grouped the way `git status` groups them: **Committed / Changes / Untracked**. Each row shows viewed state, a stage/unstage button, the change-type letter, and +/- counts. Only available with the "All changes" diff.
-- **Tree** — the classic file tree over whichever diff type you've selected.
-- **Commits** — a linear history rail of your branch, newest first, with an "In origin/main" divider where your work meets the base. Clicking a commit opens that commit's own diff (vs its parent), headed by the full commit message. Local git sessions only; a commit is never saved as your opening view.
+| Control | Options | What it decides |
+| --- | --- | --- |
+| **File layout** | `Flat` / `Tree` | How a list of files is drawn |
+| **Grouping** | `All` / `By Git status` | Which lists exist |
+
+All four combinations work, and changing one never changes the other. Both are remembered for your next review, and you can also set them in **Settings → Git**.
+
+**File layout.** `Flat` shows the filename first with its directory as quiet secondary text. `Tree` nests expandable directories with their own +/- totals (a directory holding a single file doesn't repeat that file's numbers). Every list respects your choice — including the files inside a commit.
+
+**Grouping = All** shows one combined set of changed files for whichever diff you've selected.
+
+**Grouping = By Git status** shows three collapsible sections, each with its own +/- total:
+
+- **Staged** — what's in the index.
+- **Unstaged** — working-tree changes that aren't staged, including untracked files (marked `U`).
+- **Committed** — one row per commit in the review range, newest first, with an "In origin/main" divider where your work meets the base and a `Show more` link for older history. Each row carries its subject, its own +/- total, the author, when it landed and its short sha. **Expand a commit to see the files it changed**, and pick one to review that file *as that commit changed it* — not the combined branch diff. Picking any Staged or Unstaged file brings you straight back to your working diff.
+
+Every row shows viewed state, a stage/unstage button where staging applies, the change-type letter, and +/- counts.
+
+Git-status grouping needs a local Git working tree, so the control is disabled with an explanation in pull-request reviews, multi-repository workspaces, and jj / GitButler / Perforce sessions. It also needs the composite **All changes** diff: picking it while another diff type is active switches to All changes, and selecting a classic diff type shows one combined list with a note saying why — your grouping choice is kept for when you come back.
 
 ## Annotating code
 
@@ -287,7 +304,8 @@ Runtime keys use Plannotator's runtime identifiers. For code review, the current
 | `/api/diff` | GET | Returns diff data including `rawPatch`, `gitRef`, `origin`, `diffType`, `base`, `hideWhitespace`, `gitContext`, plus the git-status `sections` and commit-metadata sidecars |
 | `/api/diff/switch` | POST | Switch diff type (including `commit:<sha>`), base branch/commit, or whitespace mode |
 | `/api/diff/fresh` | GET | Cheap staleness probe backing the "Diff out of date" notice |
-| `/api/commits` | GET | One page of the branch's linear history for the Commits panel |
+| `/api/commits` | GET | Commit history page for the navigator's Committed section |
+| `/api/commit-files` | GET | Files changed by one commit, fetched when its row is expanded |
 | `/api/fetch-base` | POST | Fetch the base branch's remote tracking ref ("Baseline is behind" banner) |
 | `/api/semantic-diff` | GET | Semantic diff for the active patch, when available |
 | `/api/file-content` | GET | Full file content for expandable diff context |

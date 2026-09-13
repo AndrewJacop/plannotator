@@ -9,8 +9,9 @@ steps to ensure your changes work correctly.
 2. [Development Workflow](#development-workflow)
 3. [Quick Testing Guide](#quick-testing-guide)
 4. [Debugging Common Issues](#debugging-common-issues)
-5. [Decision Control Manual Checklist](#decision-control-manual-checklist)
-6. [WebMCP Manual Checklist](#webmcp-manual-checklist)
+5. [Review Navigator Manual Checklist](#review-navigator-manual-checklist)
+6. [Decision Control Manual Checklist](#decision-control-manual-checklist)
+7. [WebMCP Manual Checklist](#webmcp-manual-checklist)
 
 ---
 
@@ -377,6 +378,47 @@ Build failed with X errors
 - Use `echo` statements to add debug output to scripts
 
 ---
+
+## Review Navigator Manual Checklist
+
+Not CI. The review's left panel is one surface with two independent controls (#1524). Set up a
+throwaway repo with a base branch, two or more commits ahead of it, a staged file, an unstaged
+file and an untracked file, then `plannotator review` it.
+
+1. **Four combinations.** With `File layout: Flat` + `Grouping: All`, every changed file is one
+   row, filename first with its directory after it, and there are no section headers. Switch to
+   `Tree`: the same files appear nested under directories, with per-directory `+/-` (a directory
+   holding one file shows no totals of its own). Switch `Grouping` to `By Git status`: the layout
+   stays on `Tree`. Switch back to `Flat`: the grouping stays on `By Git status`. Neither control
+   ever moves the other.
+2. **Sections.** Under `By Git status`: the staged file is under **Staged**, the unstaged and the
+   untracked file are both under **Unstaged** (the untracked one keeps its `U` letter), and each
+   header carries the section's aggregate `+/-`. A file changed only by a commit appears in
+   neither — it lives under **Committed**. Stage the unstaged file from its row: it moves to
+   Staged and both totals follow; unstage it and it moves back.
+3. **Commit rows.** **Committed** lists your commits newest first with subject, `+/-`, a HEAD
+   badge on the tip, and author + time + short sha on the second line; the `In <base>` divider
+   sits where your branch meets the base, and `Show more` pages older history. Expand one: its
+   files appear, in whichever layout is selected. Pick one: the centre switches to that commit's
+   own diff scoped to that file. Pick a Staged or Unstaged file next: you are back on the working
+   diff, on that file, with no "exit the Commits view" step anywhere.
+4. **One file, two places.** Edit a file that an earlier commit also touched. It now appears
+   under Unstaged with its working-tree `+/-` AND inside that commit with the commit's `+/-`;
+   the numbers differ by design. Select each in turn: only the one you picked is highlighted,
+   and marking one viewed does not tick the other.
+5. **Narrow panel.** Drag the panel's right edge to its 200px minimum: the two control groups
+   stack instead of truncating their labels, and the toolbar (base picker, both controls, the
+   utility row) stays put while the list scrolls under it. A long commit subject wraps without
+   running into its `+/-`.
+6. **Sessions that can't group.** In a PR review (`plannotator review <pr-url>`), a multi-repo
+   workspace review, or a jj repository, `By Git status` is disabled and its tooltip says why;
+   the list renders as one combined set. Select `By Git status` on a plain git repo, then switch
+   the diff type to `Uncommitted`: the list shows one combined set with a one-line reason above
+   it, and switching back to `All changes` restores the sections without re-picking.
+7. **Settings and migration.** **Settings → Git** offers the same two controls; changing either
+   leaves the other and **Default Diff View** alone. In a browser whose only stored preference is
+   the retired `plannotator-review-panel-view=sections` cookie, a review opens on Flat + By Git
+   status and no new cookie is written until you touch a control.
 
 ## Decision Control Manual Checklist
 
