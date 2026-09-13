@@ -4,7 +4,7 @@ import type { AnnotateAgentTerminalSide } from '@plannotator/core/agent-terminal
 import type { Origin } from '@plannotator/core/agents';
 import type { DiffLineBgIntensity } from '@plannotator/core/config-types';
 import type { TokenHoverDelay } from '@plannotator/core/token-hover';
-import { configStore, useConfigValue, setReviewPanelView, setReviewDefaultDiffType, setReviewAutoViewed } from '../config';
+import { configStore, useConfigValue, setReviewNavigatorLayout, setReviewNavigatorGrouping, setReviewDefaultDiffType, setReviewAutoViewed } from '../config';
 import { setWebMcpToolsEnabled, useWebMcpToolsEnabled } from '../webmcp/preference';
 import { loadDiffFont } from '../utils/diffFonts';
 import { TaterSpritePullup } from './TaterSpritePullup';
@@ -398,7 +398,8 @@ function ReviewAnalysisTab() {
 
 const GitTab: React.FC<{ sinceBaseUnavailable?: boolean }> = ({ sinceBaseUnavailable }) => {
   const defaultDiffType = useConfigValue('defaultDiffType');
-  const reviewPanelView = useConfigValue('reviewPanelView');
+  const navigatorLayout = useConfigValue('reviewNavigatorLayout');
+  const navigatorGrouping = useConfigValue('reviewNavigatorGrouping');
   const reviewAutoViewed = useConfigValue('reviewAutoViewed');
   return (
     <div className="space-y-5">
@@ -418,29 +419,39 @@ const GitTab: React.FC<{ sinceBaseUnavailable?: boolean }> = ({ sinceBaseUnavail
       </div>
       <div className="space-y-2">
         <div>
-          <div className="text-sm font-medium">Default review view</div>
-          <div className="text-xs text-muted-foreground">Which panel a code review opens in</div>
-          {/* This is a GLOBAL preference — never hide the options because the
+          <div className="text-sm font-medium">Review navigator</div>
+          <div className="text-xs text-muted-foreground">
+            How the review's file panel lists changes. The same two controls sit in the panel itself.
+          </div>
+          {/* These are GLOBAL preferences — never hide the options because the
               CURRENT repo can't serve them; just say so. Without this note,
-              picking Git status on a repo whose base ref doesn't resolve
-              silently falls back to Tree and the setting looks broken. */}
+              picking By Git status on a repo whose base ref doesn't resolve
+              silently shows one combined list and the setting looks broken. */}
           {sinceBaseUnavailable && (
             <div className="text-xs text-warning mt-1">
-              Git status view isn't available in this repository (its base branch
-              couldn't be resolved) — reviews here open in Tree. The preference
+              Grouping by Git status isn't available in this repository (its base branch
+              couldn't be resolved) — reviews here show one combined list. The preference
               still applies in repositories where it works.
             </div>
           )}
         </div>
-        {/* No Commits option here: the Commits view is session-only (entered
-            via the panel toggle) and is never the opening view. */}
+        <div className="text-xs text-muted-foreground">File layout</div>
         <SegmentedControl
           options={[
-            { value: 'sections' as const, label: 'Git status' },
+            { value: 'flat' as const, label: 'Flat' },
             { value: 'tree' as const, label: 'Tree' },
           ]}
-          value={reviewPanelView}
-          onChange={setReviewPanelView}
+          value={navigatorLayout}
+          onChange={setReviewNavigatorLayout}
+        />
+        <div className="text-xs text-muted-foreground pt-1">Grouping</div>
+        <SegmentedControl
+          options={[
+            { value: 'all' as const, label: 'All' },
+            { value: 'status' as const, label: 'By Git status' },
+          ]}
+          value={navigatorGrouping}
+          onChange={setReviewNavigatorGrouping}
         />
       </div>
       <div className="space-y-2">

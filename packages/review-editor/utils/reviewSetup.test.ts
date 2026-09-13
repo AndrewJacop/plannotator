@@ -7,7 +7,6 @@ import {
   initializeReviewSetup,
   needsReviewSetup,
   shouldOfferReviewSetup,
-  shouldRepairPanelPair,
 } from './reviewSetup';
 import type { ReviewSetupSession } from './reviewSetup';
 
@@ -32,26 +31,28 @@ afterEach(() => {
 });
 
 describe('initializeReviewSetup', () => {
-  test('a genuinely new reviewer starts with Tree while keeping the since-base diff default', () => {
+  test('a genuinely new reviewer starts on Tree + All while keeping the since-base diff default', () => {
     installMemoryBackend();
     const store = makeStore();
 
     expect(initializeReviewSetup(store)).toBe(true);
-    expect(store.get('reviewPanelView')).toBe('tree');
-    expect(store.get('reviewPanelViewLastUsed')).toBe('tree');
+    expect(store.get('reviewNavigatorLayout')).toBe('tree');
+    expect(store.get('reviewNavigatorGrouping')).toBe('all');
     expect(store.get('defaultDiffType')).toBe('since-base');
     expect(needsReviewSetup()).toBe(false);
   });
 
   test('an unseen reviewer inherits an existing classic diff default', () => {
+    // Failure caught: seeding the navigator pair dragging the diff default
+    // with it, which is exactly the coupling the navigator removed.
     installMemoryBackend({
       'plannotator-default-diff-type': 'uncommitted',
     });
     const store = makeStore();
 
     expect(initializeReviewSetup(store)).toBe(true);
-    expect(store.get('reviewPanelView')).toBe('tree');
-    expect(store.get('reviewPanelViewLastUsed')).toBe('tree');
+    expect(store.get('reviewNavigatorLayout')).toBe('tree');
+    expect(store.get('reviewNavigatorGrouping')).toBe('all');
     expect(store.get('defaultDiffType')).toBe('uncommitted');
   });
 
@@ -62,54 +63,55 @@ describe('initializeReviewSetup', () => {
     const store = makeStore();
 
     expect(initializeReviewSetup(store)).toBe(true);
-    expect(store.get('reviewPanelView')).toBe('tree');
+    expect(store.get('reviewNavigatorLayout')).toBe('tree');
     expect(store.get('defaultDiffType')).toBe('local-vs-remote');
   });
 
-  test('an explicit persisted view survives a session that never tripped the seen gate', () => {
+  test('an explicit persisted choice survives a session that never tripped the seen gate', () => {
     // Non-git / workspace / PR / no-since-base sessions never reach the
-    // initializer, so a reviewer can persist a view from Settings while
-    // "seen" stays unset. The next plain git session must not seed over it.
+    // initializer, so a reviewer can persist a navigator preference from
+    // Settings while "seen" stays unset. The next plain git session must not
+    // seed over it.
     installMemoryBackend({
-      'plannotator-review-panel-view': 'sections',
-      'plannotator-default-diff-type': 'since-base',
+      'plannotator-review-navigator-layout': 'flat',
+      'plannotator-review-navigator-grouping': 'status',
     });
     const store = makeStore();
 
     expect(initializeReviewSetup(store)).toBe(false);
-    expect(store.get('reviewPanelView')).toBe('sections');
-    expect(store.get('defaultDiffType')).toBe('since-base');
+    expect(store.get('reviewNavigatorLayout')).toBe('flat');
+    expect(store.get('reviewNavigatorGrouping')).toBe('status');
     // The one-time setup is consumed, so this cannot be re-evaluated later.
     expect(needsReviewSetup()).toBe(false);
   });
 
-  test('a persisted Tree view is left alone rather than re-written', () => {
+  test('a retired panel-view cookie counts as a persisted choice and is not seeded over', () => {
+    // Failure caught: an upgrading reviewer whose only stored preference is
+    // the old cookie getting silently reset to Tree + All on their next
+    // review, because the seen gate happens to be unset for them.
     installMemoryBackend({
-      'plannotator-review-panel-view': 'tree',
-      'plannotator-review-panel-view-last-used': 'sections',
+      'plannotator-review-panel-view': 'sections',
     });
     const store = makeStore();
 
     expect(initializeReviewSetup(store)).toBe(false);
-    expect(store.get('reviewPanelView')).toBe('tree');
-    // The seeding path would have stamped 'tree' here; the memo is the
-    // reviewer's, so a skipped seed must not touch it.
-    expect(store.get('reviewPanelViewLastUsed')).toBe('sections');
+    expect(store.get('reviewNavigatorLayout')).toBe('flat');
+    expect(store.get('reviewNavigatorGrouping')).toBe('status');
     expect(needsReviewSetup()).toBe(false);
   });
 
-  test('a returning reviewer keeps both the persisted view and last-used memo', () => {
+  test('a returning reviewer keeps their persisted pair', () => {
     installMemoryBackend({
       'plannotator-review-setup-seen': 'true',
-      'plannotator-review-panel-view': 'sections',
-      'plannotator-review-panel-view-last-used': 'tree',
+      'plannotator-review-navigator-layout': 'flat',
+      'plannotator-review-navigator-grouping': 'all',
       'plannotator-default-diff-type': 'since-base',
     });
     const store = makeStore();
 
     expect(initializeReviewSetup(store)).toBe(false);
-    expect(store.get('reviewPanelView')).toBe('sections');
-    expect(store.get('reviewPanelViewLastUsed')).toBe('tree');
+    expect(store.get('reviewNavigatorLayout')).toBe('flat');
+    expect(store.get('reviewNavigatorGrouping')).toBe('all');
     expect(store.get('defaultDiffType')).toBe('since-base');
   });
 });
@@ -168,34 +170,5 @@ describe('shouldOfferReviewSetup', () => {
     // first would pass every pure test above while still burning the cookie.
     const appSource = readFileSync(join(import.meta.dir, '..', 'App.tsx'), 'utf-8');
     expect(appSource).toMatch(/shouldOfferReviewSetup\(\{[\s\S]{0,400}?\}\)\s*&&\s*initializeReviewSetup\(\)/);
-  });
-});
-
-describe('shouldRepairPanelPair', () => {
-  const conflictedPair = {
-    openStatePinned: false,
-    sectionsCapable: true,
-    isFirstRunSetup: false,
-    persistedPanelView: 'sections',
-    defaultDiffType: 'uncommitted',
-  };
-
-  test('a caller-pinned session never repairs (no settings write, no diff override)', () => {
-    // Failure caught: a config.json write and a handleDiffSwitch('since-base')
-    // triggered by a session defined by writing nothing.
-    expect(shouldRepairPanelPair({ ...conflictedPair, openStatePinned: true })).toBe(false);
-  });
-
-  test('an unpinned conflicted pair still self-heals', () => {
-    // Failure caught: over-broad guards silently disabling the repair for
-    // everyone.
-    expect(shouldRepairPanelPair(conflictedPair)).toBe(true);
-  });
-
-  test('a consistent pair, first-run, or sections-incapable session does not repair', () => {
-    expect(shouldRepairPanelPair({ ...conflictedPair, defaultDiffType: 'since-base' })).toBe(false);
-    expect(shouldRepairPanelPair({ ...conflictedPair, isFirstRunSetup: true })).toBe(false);
-    expect(shouldRepairPanelPair({ ...conflictedPair, sectionsCapable: false })).toBe(false);
-    expect(shouldRepairPanelPair({ ...conflictedPair, persistedPanelView: 'tree' })).toBe(false);
   });
 });

@@ -1,5 +1,10 @@
 import { storage } from '@plannotator/ui/utils/storage';
-import { configStore, getPersistedReviewPanelView, setReviewPanelView } from '@plannotator/ui/config';
+import {
+  configStore,
+  hasPersistedNavigatorChoice,
+  setReviewNavigatorGrouping,
+  setReviewNavigatorLayout,
+} from '@plannotator/ui/config';
 
 /**
  * First-run gate for the code-review setup dialog (panel-view default + the
@@ -39,27 +44,6 @@ export function shouldOfferReviewSetup(session: ReviewSetupSession): boolean {
   );
 }
 
-/**
- * Pure guard for the panel-pair self-heal effect (persisted
- * reviewPanelView=sections with a non-since-base defaultDiffType). A pinned
- * session must not repair: the repair's other half is a config.json write plus
- * a live handleDiffSwitch — a settings write and a diff override triggered by
- * a session defined by writing nothing. The conflicted pair stays put for the
- * reviewer's next ordinary session, which is where a repair belongs.
- */
-export function shouldRepairPanelPair(session: {
-  openStatePinned: boolean;
-  sectionsCapable: boolean;
-  isFirstRunSetup: boolean;
-  persistedPanelView?: string;
-  defaultDiffType?: string;
-}): boolean {
-  if (session.openStatePinned) return false;
-  if (!session.sectionsCapable || session.isFirstRunSetup) return false;
-  if (session.persistedPanelView !== 'sections') return false;
-  return session.defaultDiffType !== 'since-base';
-}
-
 export function needsReviewSetup(): boolean {
   return storage.getItem(SEEN_KEY) !== 'true';
 }
@@ -80,18 +64,19 @@ export function initializeReviewSetup(store: typeof configStore = configStore): 
 
   // The seen cookie is not the only evidence of a returning reviewer. Sessions
   // that never reach this gate (non-git, workspace, PR, or no since-base) still
-  // let Settings persist a panel view, so a reviewer can hold an explicit
-  // choice while "seen" stays unset. Seeding Tree there would overwrite it.
-  // A persisted view IS the decision: consume the one-time setup and leave it.
-  if (getPersistedReviewPanelView() !== undefined) {
+  // let Settings persist a navigator preference, so a reviewer can hold an
+  // explicit choice while "seen" stays unset — and the retired panel-view
+  // cookies, which the registry still migrates, count as one too. Seeding over
+  // either would discard a real decision.
+  if (hasPersistedNavigatorChoice()) {
     markReviewSetupSeen();
     return false;
   }
 
-  // Selecting Tree preserves whichever defaultDiffType the store resolved.
-  // The shared setter also records Tree as last-used, so accepting the dialog
-  // opens this first review in Tree without writing server-backed config.
-  setReviewPanelView('tree', undefined, store);
+  // Tree + All is the recommended opening pair, and neither write touches
+  // `defaultDiffType` — whichever diff the store resolved stays.
+  setReviewNavigatorLayout('tree', store);
+  setReviewNavigatorGrouping('all', store);
   markReviewSetupSeen();
   return true;
 }

@@ -16,6 +16,12 @@ import {
 import type { DiffLineBgIntensity } from '@plannotator/core/config-types';
 import { isFaviconStyle, type FaviconStyle } from '@plannotator/core/favicon';
 import {
+  resolveStoredNavigatorGrouping,
+  resolveStoredNavigatorLayout,
+  type ReviewNavigatorGrouping,
+  type ReviewNavigatorLayout,
+} from '@plannotator/core/review-navigator';
+import {
   DEFAULT_TOKEN_HOVER_DELAY_MS,
   isTokenHoverDelay,
   resolveStoredTokenHoverTrigger,
@@ -212,45 +218,38 @@ export const SETTINGS = {
 
   // --- Diff display options (namespaced under diffOptions in config.json) ---
 
-  // Which left-panel view a code review OPENS in. 'sections' = the git-status
-  // view (Committed/Changes/Untracked); 'tree' = the classic file tree.
-  // Cookie-only. Written ONLY by Settings and the first-run setup dialog —
-  // the in-review header toggle is session-scoped and never writes this
-  // (looking at another view mid-review must not silently change the default).
+  // The review navigator's two independent display choices. Cookie-only, and
+  // written by the navigator's own segmented controls as well as by Settings
+  // and the first-run setup dialog: the controls ARE the preference, so there
+  // is no session/last-used/persisted ladder to keep in sync (the retired
+  // three-way header toggle needed one because it sat outside the panel).
   //
-  // Deliberately NOT a value here: 'commits'. The Commits view is session-only
-  // and never the opening view — a review always opens on files. A
-  // previously-persisted 'commits' cookie is treated as unset.
-  reviewPanelView: {
-    defaultValue: 'sections' as 'sections' | 'tree',
-    fromCookie: () => {
-      const v = storage.getItem('plannotator-review-panel-view');
-      return v === 'tree' || v === 'sections' ? v : undefined;
-    },
-    toCookie: (v: string) => storage.setItem('plannotator-review-panel-view', v),
+  // Both migrate the retired `reviewPanelView` / `reviewPanelViewLastUsed`
+  // cookies on read without writing them back — see
+  // @plannotator/core/review-navigator. Neither is coupled to
+  // `defaultDiffType`: grouping degrades to All on a diff with no git-status
+  // partition rather than dragging the diff or the layout with it.
+  reviewNavigatorLayout: {
+    defaultValue: 'flat' as ReviewNavigatorLayout,
+    fromCookie: () => resolveStoredNavigatorLayout(
+      storage.getItem('plannotator-review-navigator-layout'),
+      storage.getItem('plannotator-review-panel-view-last-used'),
+      storage.getItem('plannotator-review-panel-view'),
+    ),
+    toCookie: (v: ReviewNavigatorLayout) =>
+      storage.setItem('plannotator-review-navigator-layout', v),
     serverKey: undefined, fromServer: undefined, toServer: undefined,
   },
 
-  // The view the user last SELECTED via the in-review header toggle. Layered
-  // between the session state and the persisted reviewPanelView default, so a
-  // new session opens on what the user was actually using. Cookie-only.
-  // null = no last-used recorded (fall through to reviewPanelView).
-  //
-  // 'commits' is never recorded here for the same reason reviewPanelView
-  // rejects it: the Commits view is session-only and never an opening view.
-  reviewPanelViewLastUsed: {
-    defaultValue: null as 'sections' | 'tree' | null,
-    fromCookie: () => {
-      const v = storage.getItem('plannotator-review-panel-view-last-used');
-      return v === 'tree' || v === 'sections' ? v : undefined;
-    },
-    toCookie: (v: 'sections' | 'tree' | null) => {
-      // The null default seeds through here on first load — "unrecorded" has
-      // no cookie representation, so write nothing.
-      if (v === 'sections' || v === 'tree') {
-        storage.setItem('plannotator-review-panel-view-last-used', v);
-      }
-    },
+  reviewNavigatorGrouping: {
+    defaultValue: 'status' as ReviewNavigatorGrouping,
+    fromCookie: () => resolveStoredNavigatorGrouping(
+      storage.getItem('plannotator-review-navigator-grouping'),
+      storage.getItem('plannotator-review-panel-view-last-used'),
+      storage.getItem('plannotator-review-panel-view'),
+    ),
+    toCookie: (v: ReviewNavigatorGrouping) =>
+      storage.setItem('plannotator-review-navigator-grouping', v),
     serverKey: undefined, fromServer: undefined, toServer: undefined,
   },
 

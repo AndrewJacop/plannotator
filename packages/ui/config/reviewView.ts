@@ -1,57 +1,54 @@
+import type {
+  ReviewNavigatorGrouping,
+  ReviewNavigatorLayout,
+} from '@plannotator/core/review-navigator';
 import { configStore } from './configStore';
 import { SETTINGS } from './settings';
 import { storage } from '../utils/storage';
 
 /**
- * The ONLY writers for the coupled setting pair (reviewPanelView,
- * defaultDiffType).
+ * The writers for the review navigator's display preferences.
  *
- * Invariant: the Sections (Git status) view can only render the since-base
- * diff. So:
- *   - choosing the sections view forces defaultDiffType = 'since-base'
- *   - choosing a non-since-base default diff snaps the view to 'tree'
- *   - tree + since-base IS valid — switching to Tree leaves the diff, and
- *     choosing since-base leaves the view
+ * The unified navigator replaced the old three-way panel view, and with it the
+ * coupled `(reviewPanelView, defaultDiffType)` pair: layout and grouping are
+ * independent of each other AND of the diff. A grouping choice the active diff
+ * cannot honour (no git-status partition) degrades to All *in the render*, with
+ * a stated reason, instead of rewriting a setting behind the reviewer's back —
+ * so there is no pair to keep consistent and no self-heal to run.
  *
- * Hand-mirroring these rules at call sites is how the split-brain bug
- * happened (a writer persisted one half of the pair; configStore.init()
- * then re-corrupted it from the server every session). Never write either
- * setting directly — always go through these setters. configStore.init()
- * remains the one non-writer that can produce a conflicted pair from a
- * stale config.json; the App-level load reconciler heals that case by
- * calling setReviewPanelView('sections', { recordLastUsed: false }).
+ * These setters exist so call sites never touch the cookie keys directly and
+ * so tests can inject a store.
  */
 
 /** Store seam for tests (fresh ConfigStoreForTest); production always uses the singleton. */
-type PanelViewConfigStore = typeof configStore;
+type NavigatorConfigStore = typeof configStore;
 
-export function setReviewPanelView(
-  view: 'sections' | 'tree',
-  options?: { recordLastUsed?: boolean },
-  store: PanelViewConfigStore = configStore,
+export function setReviewNavigatorLayout(
+  layout: ReviewNavigatorLayout,
+  store: NavigatorConfigStore = configStore,
 ): void {
-  store.set('reviewPanelView', view);
-  // An explicit persisted choice also becomes the last-used view — otherwise
-  // a stale last-used cookie would immediately shadow what the user just
-  // picked in Settings / the setup dialog. recordLastUsed: false is for
-  // NON-choices: the App self-heal repairs a conflicted persisted pair
-  // without any user action, so it must not overwrite the user's memo.
-  if (options?.recordLastUsed !== false) {
-    store.set('reviewPanelViewLastUsed', view);
-  }
-  if (view === 'sections' && store.get('defaultDiffType') !== 'since-base') {
-    store.set('defaultDiffType', 'since-base');
-  }
+  store.set('reviewNavigatorLayout', layout);
+}
+
+export function setReviewNavigatorGrouping(
+  grouping: ReviewNavigatorGrouping,
+  store: NavigatorConfigStore = configStore,
+): void {
+  store.set('reviewNavigatorGrouping', grouping);
 }
 
 /**
- * The panel view the reviewer has actually persisted, or `undefined` when they
- * never chose one. Distinct from `configStore.get('reviewPanelView')`, which
- * cannot tell a stored choice apart from the built-in default, which is the
- * difference first-run seeding has to respect before it writes over anything.
+ * Whether the reviewer has ever expressed a navigator preference — including
+ * through the retired panel-view cookies, which both registry entries still
+ * migrate on read. Distinct from `configStore.get(...)`, which cannot tell a
+ * stored choice apart from the built-in default; that distinction is what
+ * first-run seeding must respect before it writes over anything.
  */
-export function getPersistedReviewPanelView(): 'sections' | 'tree' | undefined {
-  return SETTINGS.reviewPanelView.fromCookie();
+export function hasPersistedNavigatorChoice(): boolean {
+  return (
+    SETTINGS.reviewNavigatorLayout.fromCookie() !== undefined ||
+    SETTINGS.reviewNavigatorGrouping.fromCookie() !== undefined
+  );
 }
 
 export type ReviewDefaultDiffType =
@@ -63,17 +60,16 @@ export type ReviewDefaultDiffType =
   | 'merge-base'
   | 'all';
 
+/**
+ * The default diff a review opens on. Formerly coupled to the panel view
+ * (a classic diff default snapped the view to Tree); the navigator renders
+ * every diff in any layout, so this is now a plain write.
+ */
 export function setReviewDefaultDiffType(
   value: ReviewDefaultDiffType,
-  store: PanelViewConfigStore = configStore,
+  store: NavigatorConfigStore = configStore,
 ): void {
   store.set('defaultDiffType', value);
-  if (value !== 'since-base' && store.get('reviewPanelView') !== 'tree') {
-    store.set('reviewPanelView', 'tree');
-    // The snap is an explicit-choice consequence (the user picked a classic
-    // diff default), so it syncs the memo like any explicit view write.
-    store.set('reviewPanelViewLastUsed', 'tree');
-  }
 }
 
 
@@ -106,7 +102,7 @@ export function markAutoViewedNoticeSeen(): void {
  */
 export function setReviewAutoViewed(
   value: boolean,
-  store: PanelViewConfigStore = configStore,
+  store: NavigatorConfigStore = configStore,
 ): void {
   markAutoViewedNoticeSeen();
   store.set('reviewAutoViewed', value);

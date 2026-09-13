@@ -2,9 +2,10 @@ export { configStore } from './configStore';
 export type { ServerSyncFn } from './configStore';
 export { useConfigValue } from './useConfig';
 export {
-  setReviewPanelView,
+  setReviewNavigatorLayout,
+  setReviewNavigatorGrouping,
+  hasPersistedNavigatorChoice,
   setReviewDefaultDiffType,
-  getPersistedReviewPanelView,
   setReviewAutoViewed,
   needsAutoViewedNotice,
   markAutoViewedNoticeSeen,
