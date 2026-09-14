@@ -1,7 +1,7 @@
 import type {
   ReviewNavigatorGrouping,
   ReviewNavigatorLayout,
-} from '@plannotator/core/review-navigator';
+} from '../utils/reviewNavigator';
 import { configStore } from './configStore';
 import { SETTINGS } from './settings';
 import { storage } from '../utils/storage';

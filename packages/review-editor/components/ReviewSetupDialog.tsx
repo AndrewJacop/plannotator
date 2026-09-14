@@ -7,7 +7,7 @@ import {
   setReviewDefaultDiffType,
 } from '@plannotator/ui/config';
 import { TextShimmer } from '@plannotator/ui/components/TextShimmer';
-import type { ReviewNavigatorGrouping, ReviewNavigatorLayout } from '@plannotator/shared/review-navigator';
+import type { ReviewNavigatorGrouping, ReviewNavigatorLayout } from '@plannotator/ui/utils/reviewNavigator';
 import workspacesImg from '@plannotator/ui/assets/workspaces.webp';
 import sectionsImg from '@plannotator/ui/assets/review-sections.png';
 import treeImg from '@plannotator/ui/assets/review-tree.png';

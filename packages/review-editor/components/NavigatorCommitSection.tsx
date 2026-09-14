@@ -1,5 +1,5 @@
 import React from 'react';
-import type { ReviewNavigatorLayout } from '@plannotator/shared/review-navigator';
+import type { ReviewNavigatorLayout } from '@plannotator/ui/utils/reviewNavigator';
 import type { CommitFileEntry, CommitListEntry } from '@plannotator/shared/types';
 import { formatRelativeTime } from '@plannotator/ui/utils/aiChatFormat';
 import { Avatar } from './Avatar';

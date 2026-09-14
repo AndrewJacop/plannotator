@@ -25,7 +25,6 @@
     "./html-anchor": "./html-anchor.ts",
     "./open-in-apps": "./open-in-apps.ts",
     "./project": "./project.ts",
-    "./review-navigator": "./review-navigator.ts",
     "./source-save": "./source-save.ts",
     "./token-hover": "./token-hover.ts",
     "./config-types": "./config-types.ts",

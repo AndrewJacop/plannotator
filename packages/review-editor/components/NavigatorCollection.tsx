@@ -1,6 +1,6 @@
 import React from 'react';
 import { ContextMenu } from '@base-ui/react/context-menu';
-import type { ReviewNavigatorLayout } from '@plannotator/shared/review-navigator';
+import type { ReviewNavigatorLayout } from '@plannotator/ui/utils/reviewNavigator';
 import { copyTextToClipboard } from '@plannotator/ui/utils/clipboard';
 import {
   AnnotationBadge,

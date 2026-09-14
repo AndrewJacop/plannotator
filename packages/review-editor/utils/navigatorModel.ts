@@ -1,4 +1,4 @@
-import type { ReviewNavigatorGrouping } from '@plannotator/shared/review-navigator';
+import type { ReviewNavigatorGrouping } from '@plannotator/ui/utils/reviewNavigator';
 import type { SinceBaseSections } from '@plannotator/shared/types';
 import type { DiffFile } from '../types';
 

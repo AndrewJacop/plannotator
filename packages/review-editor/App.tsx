@@ -146,7 +146,7 @@ import {
 import type { DiffFile, AnnotationScrollTarget } from './types';
 import { annotationMatchesPrScope, proseAnnotationMatchesPr } from './utils/annotationScope';
 import type { DiffOption, WorktreeInfo, GitContext, SinceBaseSections, CommitDiffInfo } from '@plannotator/shared/types';
-import type { ReviewNavigatorGrouping } from '@plannotator/shared/review-navigator';
+import type { ReviewNavigatorGrouping } from '@plannotator/ui/utils/reviewNavigator';
 import { useNavigatorCommits } from './hooks/useNavigatorCommits';
 import {
   resolveEffectiveGrouping,

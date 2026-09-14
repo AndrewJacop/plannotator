@@ -2,7 +2,7 @@ import React from 'react';
 import type {
   ReviewNavigatorGrouping,
   ReviewNavigatorLayout,
-} from '@plannotator/shared/review-navigator';
+} from '@plannotator/ui/utils/reviewNavigator';
 
 /**
  * The navigator's two independent segmented controls — File layout and

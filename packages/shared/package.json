@@ -12,7 +12,6 @@
     "./jj-core": "./jj-core.ts",
     "./gitbutler-core": "./gitbutler-core.ts",
     "./review-core": "./review-core.ts",
-    "./review-navigator": "./review-navigator.ts",
     "./commit-history": "./commit-history.ts",
     "./review-workspace": "./review-workspace.ts",
     "./review-workspace-node": "./review-workspace-node.ts",

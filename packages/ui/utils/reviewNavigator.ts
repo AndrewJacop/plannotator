@@ -7,9 +7,13 @@
  * are orthogonal by construction: all four combinations are valid, and a
  * writer of one never touches the other.
  *
- * Browser-safe and dependency-free so the settings registry and the review
- * app can share the guards; the cookie plumbing lives in
- * `packages/ui/config/settings.ts`.
+ * Pure and dependency-free so the settings registry and the review app can
+ * share the guards; the cookie plumbing lives in `./config/settings.ts`.
+ *
+ * It lives here rather than in `@plannotator/core` because `@plannotator/ui`
+ * pins the PUBLISHED core version exactly and may only import subpaths that
+ * version already exports (`packages/ui/scripts/package-smoke.ts` enforces
+ * it). Adding a core subpath would require publishing core first.
  */
 
 export type ReviewNavigatorLayout = "flat" | "tree";

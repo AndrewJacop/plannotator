@@ -3,7 +3,7 @@ import {
   navigatorPairFromLegacyPanelView,
   resolveStoredNavigatorGrouping,
   resolveStoredNavigatorLayout,
-} from "./review-navigator";
+} from "./reviewNavigator";
 
 describe("navigatorPairFromLegacyPanelView", () => {
   test("maps the retired three-way panel view onto the layout/grouping pair", () => {

@@ -14,7 +14,7 @@ import type { CommitListEntry } from '@plannotator/shared/types';
 import type {
   ReviewNavigatorGrouping,
   ReviewNavigatorLayout,
-} from '@plannotator/shared/review-navigator';
+} from '@plannotator/ui/utils/reviewNavigator';
 import { ReviewNavigator } from './ReviewNavigator';
 import type { CommitFilesState } from './NavigatorCommitSection';
 import type { NavigatorSelection } from '../utils/navigatorModel';

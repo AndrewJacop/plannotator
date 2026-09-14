@@ -20,7 +20,7 @@ import {
   resolveStoredNavigatorLayout,
   type ReviewNavigatorGrouping,
   type ReviewNavigatorLayout,
-} from '@plannotator/core/review-navigator';
+} from '../utils/reviewNavigator';
 import {
   DEFAULT_TOKEN_HOVER_DELAY_MS,
   isTokenHoverDelay,
@@ -226,7 +226,7 @@ export const SETTINGS = {
   //
   // Both migrate the retired `reviewPanelView` / `reviewPanelViewLastUsed`
   // cookies on read without writing them back — see
-  // @plannotator/core/review-navigator. Neither is coupled to
+  // ../utils/reviewNavigator. Neither is coupled to
   // `defaultDiffType`: grouping degrades to All on a diff with no git-status
   // partition rather than dragging the diff or the layout with it.
   reviewNavigatorLayout: {

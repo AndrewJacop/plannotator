@@ -3,7 +3,7 @@ import { CodeAnnotation } from '@plannotator/ui/types';
 import type {
   ReviewNavigatorGrouping,
   ReviewNavigatorLayout,
-} from '@plannotator/shared/review-navigator';
+} from '@plannotator/ui/utils/reviewNavigator';
 import type {
   AvailableBranches,
   CommitListEntry,
