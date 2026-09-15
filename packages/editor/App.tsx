@@ -602,6 +602,7 @@ const App: React.FC = () => {
   // Interact.
   const [htmlAnnotateArmed, setHtmlAnnotateArmed] = useState(true);
   const handleHtmlAnnotateToggle = useCallback(() => setHtmlAnnotateArmed((v) => !v), []);
+  const handleHtmlToolsToggle = useCallback(() => setHtmlToolsHidden((v) => !v), []);
   const handleHtmlAnnotateExit = useCallback(() => setHtmlAnnotateArmed(false), []);
   // Session-level force-markdown preference (`--markdown`). When set, folder/linked HTML
   // files are converted instead of rendered raw — threaded into /api/doc as &convert=1.
@@ -615,7 +616,11 @@ const App: React.FC = () => {
   // Header "Hide tools": removes ALL floating chrome over the page (sidebar
   // tongue tabs + comment/attachments cluster) from the DOM. The header
   // button itself is the way back, so hidden state can never strand.
-  const [htmlToolsHidden, setHtmlToolsHidden] = useState(false);
+  // Initialized TRUE to match DEFAULT_HTML_CHROME_STATE: an HTML surface opens
+  // with the tools hidden, and seeding false here would flash the floating
+  // chrome for the frames before the restore effect runs. A fresh cookie still
+  // wins in both directions (the restore effect applies it).
+  const [htmlToolsHidden, setHtmlToolsHidden] = useState(true);
   const [imageBaseDir, setImageBaseDir] = useState<string | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -2189,7 +2194,7 @@ const App: React.FC = () => {
   // Restore-on-entry: every time the session transitions ONTO an HTML surface
   // (a root raw-HTML session, or a linked .html doc opened from markdown),
   // apply the sidebar/panel/toolsHidden state the user last left an HTML
-  // session with (first-ever run: both closed, tools visible). A restored
+  // session with (first-ever run: both closed, tools hidden). A restored
   // toolsHidden:true always has a way back on every layout: the desktop
   // header eye toggle, and the compact Options menu "Show tools" action
   // (compactDocumentActions). Re-restoring on each entry is also what keeps
@@ -3180,14 +3185,20 @@ const App: React.FC = () => {
     [canHandleDocumentChromeShortcut, toolstripVisible],
   );
 
-  // Interact/Annotate toggle (Mod+Shift+A) — HTML and live-app surfaces only.
-  // The bridge mirrors the same chord inside the iframe and forwards it, so
-  // this parent-side registration covers focus living in the editor chrome.
+  // Interact/Annotate toggle (Mod+Shift+A) and Show/Hide tools (Mod+Shift+X)
+  // — HTML and live-app surfaces only. The bridge mirrors both chords inside
+  // the iframe and forwards them, so this parent-side registration covers
+  // focus living in the editor chrome. The tools chord is NOT gated on
+  // documentReadOnly: the eye renders on read-only documents too.
   useHtmlAnnotateShortcuts({
     handlers: {
       toggleAnnotateMode: {
         when: (event) => isHtmlSurface && !documentReadOnly && canHandleDocumentChromeShortcut(event),
         handle: handleHtmlAnnotateToggle,
+      },
+      toggleTools: {
+        when: (event) => isHtmlSurface && canHandleDocumentChromeShortcut(event),
+        handle: handleHtmlToolsToggle,
       },
     },
   });
@@ -5531,7 +5542,7 @@ const App: React.FC = () => {
               subtitle: htmlToolsHidden
                 ? 'Bring the annotation chrome back over the page'
                 : 'Remove all floating chrome from over the page',
-              onSelect: () => setHtmlToolsHidden((v) => !v),
+              onSelect: handleHtmlToolsToggle,
             }]
           : []),
         // The desktop header's Refresh is header-only too; local HTML files
@@ -5843,7 +5854,7 @@ const App: React.FC = () => {
           htmlAnnotateArmed={htmlAnnotateArmed}
           onToggleHtmlAnnotate={isHtmlSurface && !documentReadOnly ? handleHtmlAnnotateToggle : undefined}
           htmlToolsHidden={htmlToolsHidden}
-          onToggleHtmlTools={isHtmlSurface ? () => setHtmlToolsHidden((v) => !v) : undefined}
+          onToggleHtmlTools={isHtmlSurface ? handleHtmlToolsToggle : undefined}
           canRefreshHtml={htmlRefresh.canRefresh}
           isRefreshingHtml={htmlRefresh.isRefreshing}
           onRefreshHtml={htmlRefresh.refresh}
@@ -6328,6 +6339,9 @@ const App: React.FC = () => {
                     annotateModeActive={htmlAnnotateArmed}
                     onAnnotateModeExit={documentReadOnly ? undefined : handleHtmlAnnotateExit}
                     onAnnotateModeToggle={documentReadOnly ? undefined : handleHtmlAnnotateToggle}
+                    // Mod+Shift+X from inside the iframe. Offered on read-only
+                    // documents too: the eye is not a document mutation.
+                    onToolsToggle={handleHtmlToolsToggle}
                     vimModeEnabled={liveApp ? false : vimModeEnabled && htmlAnnotateArmed}
                     vimHudEnabled={!liveApp && vimModeEnabled && htmlAnnotateArmed && vimHudEnabled}
                     vimHudKeyPanelEnabled={vimHudKeyPanelEnabled}
