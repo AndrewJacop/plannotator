@@ -163,7 +163,12 @@ import {
   resolveSessionLogByCwdScan,
   type RenderedMessage,
 } from "./session-log";
-import { findCodexRolloutsByThreadId, getLatestCodexPlan, getRecentCodexMessages } from "./codex-session";
+import {
+  findCodexRolloutsByThreadId,
+  getRecentCodexMessages,
+  logCodexStopSkip,
+  resolveCodexStopPlan,
+} from "./codex-session";
 import { findCopilotPlanContent, findCopilotSessionByAncestorPids, findCopilotSessionForCwd, getRecentCopilotMessages } from "./copilot-session";
 import {
   formatInteractiveNoArgClarification,
@@ -2337,13 +2342,13 @@ if (args[0] === "sessions") {
     // A thread can span multiple rollout files, but the Stop hook asks a
     // TURN-level question and the current turn can only live in the newest
     // segment. Take the first existing candidate only — never fall back to an
-    // older segment: findTurnStartIndex degrades to last-turn-in-file when
-    // the turn_id is absent, so a fallback file's plan is stale by
-    // construction (older segments routinely end with an already-decided
-    // <proposed_plan>) and would deterministically reopen settled plan
-    // reviews on every turn end. Contrast the annotate-last leg above, which
-    // asks a thread-level question and correctly falls back across segments
-    // (#1367).
+    // older segment: older segments routinely end with an already-decided
+    // <proposed_plan>, so a fallback file's plan is stale by construction and
+    // would reopen a settled plan review. resolveCodexStopPlan refuses a turn
+    // id it cannot anchor in the file it was given, so this is belt and
+    // braces — but it keeps the hook from even looking. Contrast the
+    // annotate-last leg above, which asks a thread-level question and
+    // correctly falls back across segments (#1367).
     const rolloutPaths = transcriptPath
       ? [transcriptPath]
       : process.env.CODEX_THREAD_ID
@@ -2351,12 +2356,17 @@ if (args[0] === "sessions") {
         : [];
     const rolloutPath = rolloutPaths.find((path) => existsSync(path)) ?? null;
 
-    const latestPlan = rolloutPath
-      ? getLatestCodexPlan(rolloutPath, {
-          turnId: typeof event.turn_id === "string" ? event.turn_id : undefined,
-          stopHookActive: !!event.stop_hook_active,
-        })
-      : null;
+    if (!rolloutPath) {
+      process.exit(0);
+    }
+
+    const { plan: latestPlan, skipReason } = resolveCodexStopPlan(rolloutPath, {
+      turnId: typeof event.turn_id === "string" ? event.turn_id : undefined,
+      stopHookActive: !!event.stop_hook_active,
+    });
+    if (skipReason) {
+      logCodexStopSkip(skipReason, { debug: process.env.PLANNOTATOR_DEBUG });
+    }
 
     if (!latestPlan?.text) {
       process.exit(0);
