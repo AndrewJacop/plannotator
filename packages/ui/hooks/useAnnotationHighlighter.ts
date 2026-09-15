@@ -190,66 +190,208 @@ const escapeAttrValue = (value: string): string => {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 };
 
-/** Whitespace-insensitive comparison for restore verification: a highlight
- *  spanning element boundaries legitimately differs from `originalText` in
- *  whitespace, so only content differences count as a mismatch. */
-const normalizeForRestoreCompare = (value: string): string =>
-  value.replace(/\s+/g, ' ').trim();
-
 // web-highlighter 0.8.x accepts only class, ID, and tag exclusions.
 const ANNOTATION_EXCLUDED_SELECTOR = '.annotation-exclude';
 
 const isAnnotationExcludedTextNode = (node: Node): boolean =>
   Boolean(node.parentElement?.closest(ANNOTATION_EXCLUDED_SELECTOR));
 
-/** Content-only comparison for the quote repair below: the painted highlight
- *  and the browser's selection string legitimately differ in whitespace
- *  (innerText inserts blank lines between blocks, wrapper `<mark>`s do not),
- *  so only the characters themselves are compared. */
+/**
+ * Content-only comparison: the painted highlight and the browser's selection
+ * string legitimately differ in whitespace (`Selection.toString()` inserts a
+ * blank line between block elements, the wrapper `<mark>`s concatenated with
+ * no separator do not), so only the characters themselves are compared.
+ *
+ * Used by BOTH the quote repair below and the restore verification, which
+ * compares `originalText` against the text the stored positions actually
+ * painted. Whitespace must be REMOVED there rather than collapsed: a quote
+ * spanning two blocks carries the browser's "\n\n" where the painted marks
+ * carry nothing at all, so collapsing to a single space rejects every correct
+ * cross-block restore. Content drift — the case that verification exists for
+ * (#1509) — still differs once whitespace is gone.
+ */
 const compactText = (value: string): string => value.replace(/\s+/g, '');
+
+/** The node a range's start boundary actually addresses: an element boundary
+ *  addresses the child at its offset, which is where web-highlighter descends
+ *  (`formatDomNode`). */
+const startBoundaryNode = (range: Range): Node => {
+  const { startContainer, startOffset } = range;
+  if (startContainer.nodeType === Node.ELEMENT_NODE) {
+    return startContainer.childNodes[startOffset] ?? startContainer;
+  }
+  return startContainer;
+};
+
+const excludedAncestor = (node: Node | null): HTMLElement | null => {
+  if (!node) return null;
+  const element = node.nodeType === Node.ELEMENT_NODE
+    ? (node as HTMLElement)
+    : node.parentElement;
+  return element?.closest<HTMLElement>(ANNOTATION_EXCLUDED_SELECTOR) ?? null;
+};
+
+/**
+ * Move a range's start off any `.annotation-exclude` subtree it begins inside,
+ * onto the first annotatable text position the range covers.
+ *
+ * web-highlighter never ENTERS an excluded subtree (`painter/dom.ts` skips it
+ * before the "are we at the start node" check), so a range that starts inside
+ * one never flips its in-selection flag: every intermediate run is dropped and
+ * only the trailing text node is painted. A drag from a GitHub alert's icon —
+ * where the visually hidden "Tip: " lives — through the alert body therefore
+ * highlighted the body alone and left the title unpainted, while the quote
+ * still carried the invisible word. Snapping fixes both at once: the painted
+ * extent covers what the reviewer dragged over, and the quote (which web-
+ * highlighter derives from this same range/selection) no longer contains the
+ * hidden chrome.
+ *
+ * Snapping is by NODE IDENTITY, never by matching text. Returns whether the
+ * range was changed.
+ */
+const snapRangeStartPastExcluded = (range: Range): boolean => {
+  const excluded = excludedAncestor(startBoundaryNode(range));
+  if (!excluded) return false;
+
+  const scopeNode = range.commonAncestorContainer;
+  const scope = scopeNode.nodeType === Node.ELEMENT_NODE
+    ? (scopeNode as Element)
+    : scopeNode.parentElement;
+  // A range that lies entirely inside the excluded subtree has nothing to snap
+  // to; leave it alone (it paints nothing, exactly as before).
+  if (!scope || excluded.contains(scope)) return false;
+
+  const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+  let node: Node | null;
+  while ((node = walker.nextNode())) {
+    const text = node as Text;
+    if (!text.length) continue;
+    // Skip everything at or before the excluded subtree, and any other
+    // excluded run that follows it.
+    if (excluded.contains(text)) continue;
+    const position = excluded.compareDocumentPosition(text);
+    if (!(position & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+    if (isAnnotationExcludedTextNode(text)) continue;
+    // Never past the range's own end.
+    if (text === range.endContainer) {
+      if (range.endOffset === 0) return false;
+      range.setStart(text, 0);
+      return true;
+    }
+    const toEnd = text.compareDocumentPosition(range.endContainer);
+    if (!(toEnd & Node.DOCUMENT_POSITION_FOLLOWING)) return false;
+    range.setStart(text, 0);
+    return true;
+  }
+  return false;
+};
+
+/** One clipped text run of a range, and whether it is excluded chrome. */
+interface RangeTextPiece {
+  text: string;
+  excluded: boolean;
+}
+
+/**
+ * The range's own text runs in document order, clipped to its boundaries.
+ *
+ * Read BEFORE the highlight is painted: painting splits and re-parents text
+ * nodes, which leaves the range's boundaries stale. The runs are plain strings
+ * and survive that.
+ *
+ * Returns null for a shape this cannot read (an element-node boundary, or an
+ * end boundary the walk never reaches), so callers leave the quote alone.
+ */
+const rangeTextPieces = (range: Range): RangeTextPiece[] | null => {
+  const { startContainer, endContainer, startOffset, endOffset } = range;
+  if (startContainer?.nodeType !== Node.TEXT_NODE) return null;
+  if (endContainer?.nodeType !== Node.TEXT_NODE) return null;
+
+  const scopeNode = range.commonAncestorContainer;
+  const scope = scopeNode?.nodeType === Node.ELEMENT_NODE
+    ? (scopeNode as Element)
+    : scopeNode?.parentElement;
+  if (!scope) return null;
+
+  const pieces: RangeTextPiece[] = [];
+  const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+  let started = false;
+  let node: Node | null;
+  while ((node = walker.nextNode())) {
+    const text = node as Text;
+    if (!started) {
+      if (text !== startContainer) continue;
+      started = true;
+    }
+    const from = text === startContainer ? startOffset : 0;
+    const to = text === endContainer ? endOffset : text.length;
+    const slice = (text.textContent ?? '').slice(from, to);
+    if (slice) pieces.push({ text: slice, excluded: isAnnotationExcludedTextNode(text) });
+    if (text === endContainer) return pieces;
+  }
+  return null;
+};
 
 /**
  * Drop `.annotation-exclude` chrome from a new annotation's quote.
  *
  * Excluded nodes are never PAINTED (they are in the highlighter's
  * `exceptSelectors`) and never searched (the restore TreeWalker rejects
- * them), but the browser's selection string still contains them — a drag that
- * starts at the left edge of a GitHub alert's title row reports the visually
- * hidden "Tip: " that keeps the alert type in its accessible name (#1511).
- * That string becomes `originalText`: the quote in the panel, the quote handed
- * to the agent, and the only handle a share link has for re-finding the
+ * them), but the browser's selection string still contains them — a selection
+ * that runs THROUGH a GitHub alert's title row picks up the visually hidden
+ * "Tip: " that keeps the alert type in its accessible name (#1511). That
+ * string becomes `originalText`: the quote in the panel, the quote handed to
+ * the agent, and the only handle a share link has for re-finding the
  * highlight — which it then never can, because the search stream skips the
- * excluded text.
+ * excluded text. (A selection that BEGINS inside such a node is handled
+ * earlier, by {@link snapRangeStartPastExcluded}.)
  *
- * The painted highlight is therefore the authority on CONTENT and the
- * selection string on FORMATTING: remove each excluded run and keep the
- * result only when it matches what was painted, so an unrecognized shape
- * leaves the quote exactly as before.
+ * The removal is positional, driven by the range's own nodes rather than by
+ * searching the quote for the chrome's text: the excluded runs are located in
+ * the quote's whitespace-free coordinate space, where the selection string and
+ * the concatenated runs agree character for character. Searching by text
+ * removed the wrong occurrence whenever the body prose legitimately contained
+ * the same words ("Tip: " as real copy), which then failed the final check and
+ * silently kept the invisible word. The painted highlight remains the last
+ * word on CONTENT: an unrecognized shape leaves the quote exactly as before.
  */
 const quoteWithoutExcludedText = (
-  container: HTMLElement | null,
+  pieces: RangeTextPiece[] | null,
   selectionText: string,
   paintedText: string,
 ): string => {
-  if (!container || !selectionText) return selectionText;
+  if (!selectionText) return selectionText;
   if (compactText(selectionText) === compactText(paintedText)) return selectionText;
+  if (!pieces || !pieces.some(piece => piece.excluded)) return selectionText;
 
-  const excluded = container.querySelectorAll<HTMLElement>(ANNOTATION_EXCLUDED_SELECTOR);
-  if (excluded.length === 0) return selectionText;
-
-  let quote = selectionText;
-  excluded.forEach(element => {
-    const chunk = element.textContent ?? '';
-    // Browsers drop a trailing space at an inline boundary, so a rendered
-    // "Tip: " reads back from the selection as "Tip:".
-    for (const candidate of [chunk, chunk.replace(/\s+$/, '')]) {
-      if (!candidate.trim()) continue;
-      const index = quote.indexOf(candidate);
-      if (index === -1) continue;
-      quote = quote.slice(0, index) + quote.slice(index + candidate.length);
-      break;
+  // Excluded spans in compacted (whitespace-free) coordinates.
+  const spans: { start: number; end: number }[] = [];
+  let compactLength = 0;
+  for (const piece of pieces) {
+    const length = compactText(piece.text).length;
+    if (piece.excluded && length > 0) {
+      spans.push({ start: compactLength, end: compactLength + length });
     }
-  });
+    compactLength += length;
+  }
+  if (spans.length === 0) return selectionText;
+  // The selection string and the range's runs must describe the same
+  // characters for positions to mean anything.
+  if (compactText(selectionText).length !== compactLength) return selectionText;
+
+  let cursor = 0;
+  let quote = '';
+  for (const char of selectionText) {
+    if (/\s/.test(char)) {
+      // Whitespace has no compacted position of its own: drop it only when it
+      // sits inside an excluded run or immediately after one, so removing
+      // "Tip:" takes the space that followed it with it.
+      if (!spans.some(span => cursor > span.start && cursor <= span.end)) quote += char;
+      continue;
+    }
+    if (!spans.some(span => cursor >= span.start && cursor < span.end)) quote += char;
+    cursor += 1;
+  }
 
   return compactText(quote) === compactText(paintedText) ? quote.trim() : selectionText;
 };
@@ -372,6 +514,10 @@ export function useAnnotationHighlighter({
   const justCreatedIdRef = useRef<string | null>(null);
   const lastMousePosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const mouseDownMathRef = useRef<HTMLElement | null>(null);
+  /** The text runs of the range the highlight about to be created came from,
+   *  captured before painting (which invalidates the range itself). The CREATE
+   *  handler repairs the quote from them. */
+  const pendingRangeRunsRef = useRef<RangeTextPiece[] | null>(null);
 
   const [toolbarState, setToolbarState] = useState<ToolbarState | null>(null);
   const [commentPopover, setCommentPopover] = useState<CommentPopoverState | null>(null);
@@ -743,7 +889,7 @@ export function useAnnotationHighlighter({
             const restoredText = restoredDoms.map(dom => dom.textContent ?? '').join('');
             if (
               verifyRestoredContent &&
-              normalizeForRestoreCompare(restoredText) !== normalizeForRestoreCompare(ann.originalText)
+              compactText(restoredText) !== compactText(ann.originalText)
             ) {
               // Positions resolved, but onto the WRONG text — remove the bad
               // highlight and fall through to the text-search fallback.
@@ -921,7 +1067,7 @@ export function useAnnotationHighlighter({
           // the comment draft key, and the annotation's own `originalText` all
           // come from `source.text`.
           source.text = quoteWithoutExcludedText(
-            containerRef.current,
+            pendingRangeRunsRef.current,
             source.text,
             doms.map((dom: HTMLElement) => dom.textContent ?? '').join(''),
           );
@@ -972,6 +1118,33 @@ export function useAnnotationHighlighter({
     highlighter.on(Highlighter.event.CLICK, ({ id }: { id: string }) => {
       onSelectAnnotationRef.current?.(id);
     });
+
+    // web-highlighter's own pointer-end handler reads the LIVE selection, so
+    // the range it paints and quotes has to be corrected before that handler
+    // runs: registered on the capture phase of the same element, and before
+    // `run()` so registration order settles the at-target case too.
+    const handlePointerEndCapture = () => {
+      const container = containerRef.current;
+      const selection = window.getSelection();
+      if (!container || !selection || selection.isCollapsed || selection.rangeCount === 0) {
+        pendingRangeRunsRef.current = null;
+        return;
+      }
+      const range = selection.getRangeAt(0).cloneRange();
+      if (!container.contains(range.commonAncestorContainer)) {
+        pendingRangeRunsRef.current = null;
+        return;
+      }
+      if (snapRangeStartPastExcluded(range)) {
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+      pendingRangeRunsRef.current = rangeTextPieces(range);
+    };
+
+    const container = containerRef.current;
+    container.addEventListener('mouseup', handlePointerEndCapture, true);
+    container.addEventListener('touchend', handlePointerEndCapture, true);
 
     highlighter.run();
 
@@ -1071,7 +1244,10 @@ export function useAnnotationHighlighter({
             const sel = window.getSelection();
             if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
             if (!containerRef.current?.contains(sel.anchorNode)) return;
-            highlighter.fromRange(sel.getRangeAt(0));
+            const range = sel.getRangeAt(0).cloneRange();
+            snapRangeStartPastExcluded(range);
+            pendingRangeRunsRef.current = rangeTextPieces(range);
+            highlighter.fromRange(range);
           }, 400);
         }
       : null;
@@ -1087,6 +1263,8 @@ export function useAnnotationHighlighter({
       }
       containerRef.current?.removeEventListener('mousedown', handleMathMouseDown, true);
       containerRef.current?.removeEventListener('mouseup', handleMathMouseUp, true);
+      container.removeEventListener('mouseup', handlePointerEndCapture, true);
+      container.removeEventListener('touchend', handlePointerEndCapture, true);
       highlighter.dispose();
     };
   }, [clearPendingSelection, enabled]);
@@ -1097,13 +1275,21 @@ export function useAnnotationHighlighter({
     if (!highlighter || !container || range.collapsed) return;
     if (!container.contains(range.commonAncestorContainer)) return;
 
+    // Pinpoint clicks and vim visual selections anchor on the first
+    // annotatable text node of a block, which for a titled GitHub alert is the
+    // visually hidden type word; snap off it before painting (the caller's own
+    // range is left untouched).
+    const painted = range.cloneRange();
+    snapRangeStartPastExcluded(painted);
+    pendingRangeRunsRef.current = rangeTextPieces(painted);
+
     const selection = window.getSelection();
     selection?.removeAllRanges();
-    selection?.addRange(range.cloneRange());
+    selection?.addRange(painted.cloneRange());
     pendingModeOverrideRef.current = modeOverride ?? null;
 
     try {
-      highlighter.fromRange(range);
+      highlighter.fromRange(painted);
     } finally {
       pendingModeOverrideRef.current = null;
       selection?.removeAllRanges();
