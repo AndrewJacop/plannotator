@@ -65,12 +65,13 @@ import { buildDefaultPrompt, useAIChat } from '@plannotator/ui/hooks/useAIChat';
 import { getUIPreferences, type UIPreferences, type PlanWidth } from '@plannotator/ui/utils/uiPreferences';
 import { getEditorMode, saveEditorMode } from '@plannotator/ui/utils/editorMode';
 import { getInputMethod, refreshInputMethodStamp, saveInputMethod } from '@plannotator/ui/utils/inputMethod';
-import { getHtmlChromeState, saveHtmlChromeState, shouldRestoreHtmlChrome } from '@plannotator/ui/utils/htmlChrome';
+import { getHtmlChromeState, mergeHtmlChromeState, saveHtmlChromeState, shouldRestoreHtmlChrome } from '@plannotator/ui/utils/htmlChrome';
 import {
-  groupAnnotationsByDocument,
+  buildAnnotationDocumentGroups,
   getAnnotationScopePreference,
   resolveInitialAnnotationScope,
   setAnnotationScopePreference,
+  ROOT_DOCUMENT_GROUP_KEY,
   type AnnotationScope,
 } from '@plannotator/ui/utils/annotationScope';
 import { useInputMethodSwitch } from '@plannotator/ui/hooks/useInputMethodSwitch';
@@ -2281,6 +2282,12 @@ const App: React.FC = () => {
   // (compactDocumentActions). Re-restoring on each entry is also what keeps
   // a markdown surface's sidebar state from leaking into the HTML cookie on
   // the way back.
+  //
+  // A folder annotate session is a partial participant: its file browser owns
+  // the left sidebar (and the panel that rides with it), so those two halves
+  // are neither restored nor written there — but `toolsHidden` is, because it
+  // describes the HTML surface itself and means the same thing everywhere.
+  const htmlChromeSideSurfacesOwned = annotateSource === 'folder';
   const prevHtmlChromeSurfaceRef = useRef(false);
   useEffect(() => {
     if (isLoading || isLoadingShared) return;
@@ -2290,19 +2297,25 @@ const App: React.FC = () => {
     if (!shouldRestoreHtmlChrome({
       isHtmlSurface,
       wasHtmlSurface: wasHtml,
-      suppressed: archive.archiveMode || goalSetupMode || annotateSource === 'folder',
+      suppressed: archive.archiveMode || goalSetupMode,
     })) return;
     const chrome = getHtmlChromeState();
     skipNextHtmlChromeSaveRef.current = true;
-    if (chrome.sidebarOpen) sidebar.open();
-    else sidebar.close();
-    setIsPanelOpen(chrome.panelOpen);
+    // A folder session's file browser owns the left sidebar for the whole
+    // session, so only the toolsHidden half is this surface's to restore.
+    // Suppressing all three (as it used to) made the flipped default permanent
+    // in folder sessions: the eye could never remember "show tools".
+    if (!htmlChromeSideSurfacesOwned) {
+      if (chrome.sidebarOpen) sidebar.open();
+      else sidebar.close();
+      setIsPanelOpen(chrome.panelOpen);
+    }
     setHtmlToolsHidden(chrome.toolsHidden);
     htmlChromeRestoredRef.current = true;
   }, [
-    annotateSource,
     archive.archiveMode,
     goalSetupMode,
+    htmlChromeSideSurfacesOwned,
     isHtmlSurface,
     isLoading,
     isLoadingShared,
@@ -2329,8 +2342,12 @@ const App: React.FC = () => {
       skipNextHtmlChromeSaveRef.current = false;
       return;
     }
-    saveHtmlChromeState({ sidebarOpen: sidebar.isOpen, panelOpen: isPanelOpen, toolsHidden: htmlToolsHidden });
-  }, [isHtmlSurface, sidebar.isOpen, isPanelOpen, htmlToolsHidden]);
+    saveHtmlChromeState(mergeHtmlChromeState({
+      persisted: getHtmlChromeState(),
+      live: { sidebarOpen: sidebar.isOpen, panelOpen: isPanelOpen, toolsHidden: htmlToolsHidden },
+      sideSurfacesOwned: htmlChromeSideSurfacesOwned,
+    }));
+  }, [isHtmlSurface, sidebar.isOpen, isPanelOpen, htmlToolsHidden, htmlChromeSideSurfacesOwned]);
 
   const ensureShareLink = useCallback(async (): Promise<string | null> => {
     const existing = shortShareUrl || shareUrl;
@@ -4417,6 +4434,17 @@ const App: React.FC = () => {
   // only ever showed the open one. These derive the "All files" view: every
   // document that carries feedback, the open one first.
   const currentDocumentPath = linkedDocHook.filepath ?? sourceFilePath ?? null;
+  // The open document's group key. A plan-review session's document is the plan
+  // itself, which has no path (`sourceFilePath` is annotate-only), so keying the
+  // group by path alone dropped it from the "All files" list entirely — the
+  // plan's own comments were neither shown nor counted. The synthetic key keeps
+  // it in the list; it is still the OPEN document, so its group is `isCurrent`
+  // and the panel routes select/edit/delete to the live host state, not to the
+  // cross-document store.
+  const currentDocumentGroupKey = currentDocumentPath ?? ROOT_DOCUMENT_GROUP_KEY;
+  const currentDocumentGroupLabel = currentDocumentPath
+    ? undefined
+    : (annotateMode ? '(this document)' : '(this plan)');
 
   const annotationDocumentRoots = useMemo(() => {
     const roots = fileBrowser.dirs.filter((d) => !d.isVault).map((d) => d.path);
@@ -4425,19 +4453,22 @@ const App: React.FC = () => {
   }, [fileBrowser.dirs, projectRoot]);
 
   const annotationDocumentGroups = useMemo(() => {
-    const byPath = new Map<string, Annotation[]>();
-    for (const [filepath, entry] of linkedDocHook.getDocAnnotations()) {
-      byPath.set(filepath, entry.annotations);
-    }
-    // The open document's live list (externals included) is the same set its
-    // "This file" timeline renders; the cache copy behind it can be stale.
-    if (currentDocumentPath) byPath.set(currentDocumentPath, allAnnotations);
-    return groupAnnotationsByDocument(
-      Array.from(byPath, ([path, annotations]) => ({ path, annotations })),
-      currentDocumentPath,
-      annotationDocumentRoots,
-    );
-  }, [linkedDocHook.getDocAnnotations, allAnnotations, currentDocumentPath, annotationDocumentRoots]);
+    return buildAnnotationDocumentGroups({
+      cached: Array.from(linkedDocHook.getDocAnnotations(), ([filepath, entry]) => [filepath, entry.annotations] as const),
+      current: {
+        key: currentDocumentGroupKey,
+        label: currentDocumentGroupLabel,
+        annotations: allAnnotations,
+      },
+      roots: annotationDocumentRoots,
+    });
+  }, [
+    linkedDocHook.getDocAnnotations,
+    allAnnotations,
+    currentDocumentGroupKey,
+    currentDocumentGroupLabel,
+    annotationDocumentRoots,
+  ]);
 
   const otherDocumentAnnotationCount = useMemo(
     () => annotationDocumentGroups.reduce((n, g) => (g.isCurrent ? n : n + g.annotations.length), 0),
@@ -4520,15 +4551,42 @@ const App: React.FC = () => {
   // annotations. They are deliberately NOT recorded in the annotation history:
   // that stack describes the open document's surface, and an entry that undoes
   // into a document you are not looking at would restore invisible state.
-  const handleDeleteAnnotationInDocument = React.useCallback((path: string, id: string) => {
+  // `updateStoredAnnotations` returns false when the path names no stored
+  // document — including the open one, whose annotations are host state. Acting
+  // on that return is what keeps a cross-file Edit/Delete from being a silent
+  // no-op: the open document falls back to the live mutators, and anything else
+  // says so instead of appearing to work.
+  const applyCrossDocumentMutation = React.useCallback((
+    path: string,
+    update: (annotations: Annotation[]) => Annotation[],
+    live: () => void,
+  ) => {
     if (documentReadOnly) return;
-    linkedDocHook.updateStoredAnnotations(path, (anns) => anns.filter((a) => a.id !== id));
-  }, [documentReadOnly, linkedDocHook]);
+    if (linkedDocHook.updateStoredAnnotations(path, update)) return;
+    if (normalizeBrowserPath(path) === normalizeBrowserPath(currentDocumentGroupKey)) {
+      live();
+      return;
+    }
+    toast.error('Could not update that comment', {
+      description: 'Open the file it belongs to and try again.',
+    });
+  }, [currentDocumentGroupKey, documentReadOnly, linkedDocHook]);
+
+  const handleDeleteAnnotationInDocument = React.useCallback((path: string, id: string) => {
+    applyCrossDocumentMutation(
+      path,
+      (anns) => anns.filter((a) => a.id !== id),
+      () => handleDeleteAnnotation(id),
+    );
+  }, [applyCrossDocumentMutation, handleDeleteAnnotation]);
 
   const handleEditAnnotationInDocument = React.useCallback((path: string, id: string, updates: Partial<Annotation>) => {
-    if (documentReadOnly) return;
-    linkedDocHook.updateStoredAnnotations(path, (anns) => anns.map((a) => (a.id === id ? { ...a, ...updates } : a)));
-  }, [documentReadOnly, linkedDocHook]);
+    applyCrossDocumentMutation(
+      path,
+      (anns) => anns.map((a) => (a.id === id ? { ...a, ...updates } : a)),
+      () => handleEditAnnotation(id, updates),
+    );
+  }, [applyCrossDocumentMutation, handleEditAnnotation]);
 
   // WebMCP (browser-agent tools). The hook detects `document.modelContext`
   // once and does nothing in a browser without it; the banner state below
@@ -5818,12 +5876,16 @@ const App: React.FC = () => {
     !showPermissionModeSetup;
   // LAST in this app's first-run sequence: it asks for no decision, so it waits
   // behind the look-and-feel chooser and the two setup flows. Archive browsing
-  // and a read-only shared plan (which is also what the share portal serves)
-  // have no one to address, so it is deferred there rather than consumed.
+  // and a read-only shared plan have no one to address, so it is deferred there
+  // rather than consumed — and so is any session with no Plannotator server
+  // behind it (`!isApiMode`): the share portal's own root and the demo plan it
+  // renders never fetch /api/plan, and `isSharedSession` alone does not cover
+  // them. `isApiMode` is settled by the time `isLoading` clears, so this can
+  // never defer a real session.
   const shouldShowTerminalToolsAnnouncement = terminalToolsAnnouncementCanShow({
     announcementPending: terminalToolsIntroPending,
     isLoading,
-    readOnlySession: isSharedSession || archive.archiveMode,
+    readOnlySession: isSharedSession || archive.archiveMode || !isApiMode,
     compact: isCompactTouchLayout,
     otherFirstRunDialogVisible:
       shouldShowLookAndFeelAnnouncement || goalSetupMode || showPermissionModeSetup,
