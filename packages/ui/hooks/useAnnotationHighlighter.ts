@@ -212,6 +212,84 @@ const isAnnotationExcludedTextNode = (node: Node): boolean =>
  */
 const compactText = (value: string): string => value.replace(/\s+/g, '');
 
+/**
+ * The text a set of painted highlight wrappers shows the reader.
+ *
+ * Not `textContent`: a wrapper can legitimately contain `.annotation-exclude`
+ * chrome (a list marker the selection crossed, an alert's visually hidden type
+ * word), and that chrome is in neither the browser's selection string nor the
+ * quote derived from it. Comparing raw `textContent` against `originalText`
+ * therefore rejected correct restores over anything non-selectable.
+ */
+const paintedTextOf = (doms: readonly HTMLElement[]): string => {
+  let painted = '';
+  for (const dom of doms) {
+    if (!dom) continue;
+    if (dom.closest?.(ANNOTATION_EXCLUDED_SELECTOR)) continue;
+    const walker = document.createTreeWalker(dom, NodeFilter.SHOW_TEXT);
+    let node: Node | null;
+    while ((node = walker.nextNode())) {
+      if (isAnnotationExcludedTextNode(node)) continue;
+      painted += node.textContent ?? '';
+    }
+  }
+  return painted;
+};
+
+/**
+ * Tags whose boxes a browser separates with a line break in a selection string.
+ *
+ * Read by {@link blockBoundaryOffsets} only; a computed-style check would be
+ * more precise but is unavailable under the test DOM and would cost a layout
+ * read per text node on every restore.
+ */
+const BLOCK_LEVEL_TAGS = new Set([
+  'ADDRESS', 'ARTICLE', 'ASIDE', 'BLOCKQUOTE', 'BODY', 'DD', 'DETAILS', 'DIALOG',
+  'DIV', 'DL', 'DT', 'FIELDSET', 'FIGCAPTION', 'FIGURE', 'FOOTER', 'FORM',
+  'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HEADER', 'HGROUP', 'HR', 'LI', 'MAIN',
+  'NAV', 'OL', 'P', 'PRE', 'SECTION', 'SUMMARY', 'TABLE', 'TBODY', 'TD',
+  'TFOOT', 'TH', 'THEAD', 'TR', 'UL',
+]);
+
+const nearestBlockAncestor = (node: Node): Element | null => {
+  let element = node.parentElement;
+  while (element) {
+    if (BLOCK_LEVEL_TAGS.has(element.tagName)) return element;
+    element = element.parentElement;
+  }
+  return null;
+};
+
+/**
+ * Offsets in the concatenated text stream at which a new block box starts.
+ *
+ * The document's text nodes are joined with nothing between them, but the
+ * browser's selection string puts a blank line between two block elements —
+ * so a quote spanning two blocks carries whitespace the search stream does
+ * not, and the whitespace-collapsing fallback could never match it. Every
+ * cross-block annotation therefore lost its highlight the moment it had to
+ * fall back to text search (which is every one of them after an Edit Mode
+ * commit, where `applyEditedDocument` strips the stored positions of any
+ * annotation whose quote is not contained in one block).
+ *
+ * Reported as offsets rather than inserted into the stream so the existing
+ * offset-to-node mapping keeps working untouched.
+ */
+const blockBoundaryOffsets = (textNodes: readonly Text[]): Set<number> => {
+  const boundaries = new Set<number>();
+  let offset = 0;
+  let previousBlock: Element | null = null;
+  let seenAny = false;
+  for (const node of textNodes) {
+    const block = nearestBlockAncestor(node);
+    if (seenAny && block !== previousBlock && offset > 0) boundaries.add(offset);
+    previousBlock = block;
+    seenAny = true;
+    offset += node.textContent?.length ?? 0;
+  }
+  return boundaries;
+};
+
 /** The node a range's start boundary actually addresses: an element boundary
  *  addresses the child at its offset, which is where web-highlighter descends
  *  (`formatDomNode`). */
@@ -284,6 +362,74 @@ const snapRangeStartPastExcluded = (range: Range): boolean => {
     return true;
   }
   return false;
+};
+
+/** A resolved restore boundary: web-highlighter's own `DomNode` shape. */
+interface RestoreBoundary {
+  $node: Node;
+  offset: number;
+}
+
+/** The nearest text node on one side of `node` that annotation painting can
+ *  reach, skipping every `.annotation-exclude` run. */
+const annotatableTextNeighbour = (
+  root: Element,
+  node: Node,
+  direction: 1 | -1,
+): Text | null => {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const all: Text[] = [];
+  let current: Node | null;
+  while ((current = walker.nextNode())) all.push(current as Text);
+
+  const index = all.indexOf(node as Text);
+  if (index < 0) return null;
+  for (let i = index + direction; i >= 0 && i < all.length; i += direction) {
+    const text = all[i]!;
+    if (!text.length) continue;
+    if (isAnnotationExcludedTextNode(text)) continue;
+    return text;
+  }
+  return null;
+};
+
+/**
+ * Move a RESTORED boundary off any `.annotation-exclude` subtree it resolved
+ * into, the same snap {@link snapRangeStartPastExcluded} applies to a live
+ * selection.
+ *
+ * A stored `textOffset` counts every text node under the recorded parent,
+ * excluded chrome included — and so does the resolver that reads it back
+ * (`getTextChildByOffset`), which resolves a boundary sitting exactly at the
+ * end of one text node onto THAT node rather than the start of the next. A
+ * drag from a GitHub alert's icon therefore stores a start of 5, the length of
+ * the hidden "Tip: ", and restores onto the hidden span — where painting never
+ * enters, so every run before the last one was dropped, the verification
+ * rejected what was left, and the text search could not bridge the title into
+ * the body either. The annotation came back from its own draft unpainted.
+ *
+ * Normalizing the stored metas at creation time instead is not available: they
+ * are only meaningful in the resolver's own coordinates, which count the
+ * excluded text. Snapping on restore also covers every draft already on disk.
+ */
+const snapRestoredBoundary = (
+  root: Element,
+  boundary: RestoreBoundary,
+  direction: 1 | -1,
+): RestoreBoundary => {
+  const node = boundary.$node;
+  if (!node || node.nodeType !== Node.TEXT_NODE) return boundary;
+  if (!isAnnotationExcludedTextNode(node)) return boundary;
+  const neighbour = annotatableTextNeighbour(root, node, direction);
+  if (!neighbour) return boundary;
+  return { $node: neighbour, offset: direction === 1 ? 0 : neighbour.length };
+};
+
+/** Whether a snapped pair would describe a backwards range. */
+const restoreBoundariesCross = (start: RestoreBoundary, end: RestoreBoundary): boolean => {
+  if (start.$node === end.$node) return start.offset > end.offset;
+  const position = start.$node.compareDocumentPosition(end.$node);
+  return !(position & Node.DOCUMENT_POSITION_FOLLOWING);
 };
 
 /** One clipped text run of a range, and whether it is excluded chrome. */
@@ -458,6 +604,19 @@ export interface UseAnnotationHighlighterOptions {
   /** Fires when a restore was rejected (content mismatch) and the text-search
    *  fallback could not re-anchor the annotation either. */
   onRestoreMismatch?: (annotation: Annotation, restoredText: string) => void;
+  /** Fires once per `applyAnnotations` pass with what that pass tried and what
+   *  it could not anchor, so a host can mark the leftovers in its panel. */
+  onRestoreReport?: (report: AnnotationRestoreReport) => void;
+}
+
+/** The outcome of one `applyAnnotations` pass. */
+export interface AnnotationRestoreReport {
+  /** Ids the pass considered — including ones already painted, which are
+   *  anchored by definition. A host clears their unanchored marks. */
+  attempted: string[];
+  /** Of those, the ones left with no highlight because the stored positions
+   *  resolved onto the wrong text AND the quote was nowhere in the document. */
+  unanchored: string[];
 }
 
 /** Annotation UI state and mutation commands owned by one rendered document. */
@@ -502,6 +661,7 @@ export function useAnnotationHighlighter({
   enabled = true,
   verifyRestoredContent = false,
   onRestoreMismatch,
+  onRestoreReport,
 }: UseAnnotationHighlighterOptions): UseAnnotationHighlighterReturn {
   const highlighterRef = useRef<Highlighter | null>(null);
   const modeRef = useRef<EditorMode>(mode);
@@ -529,6 +689,8 @@ export function useAnnotationHighlighter({
   useEffect(() => { onSelectAnnotationRef.current = onSelectAnnotation; }, [onSelectAnnotation]);
   const onRestoreMismatchRef = useRef(onRestoreMismatch);
   useEffect(() => { onRestoreMismatchRef.current = onRestoreMismatch; }, [onRestoreMismatch]);
+  const onRestoreReportRef = useRef(onRestoreReport);
+  useEffect(() => { onRestoreReportRef.current = onRestoreReport; }, [onRestoreReport]);
 
   const clearPendingSelection = useCallback(() => {
     pendingSourceRef.current = null;
@@ -613,12 +775,24 @@ export function useAnnotationHighlighter({
         return null;
       };
 
-      const normalizeWithMap = (text: string): { text: string; map: number[] } => {
+      // `boundaries` names offsets at which a new block box starts. They are
+      // normalized as if a space stood there, because that is what the
+      // browser's selection string carries at the same place — which is the
+      // only way a cross-block quote can match this stream.
+      const normalizeWithMap = (
+        text: string,
+        boundaries?: ReadonlySet<number>,
+      ): { text: string; map: number[] } => {
         let normalized = '';
         const map: number[] = [];
         let inWhitespace = false;
 
         for (let i = 0; i < text.length; i++) {
+          if (boundaries?.has(i) && !inWhitespace && normalized.length > 0) {
+            normalized += ' ';
+            map.push(i);
+            inWhitespace = true;
+          }
           const ch = text[i];
           if (/\s/.test(ch)) {
             if (!inWhitespace) {
@@ -661,7 +835,7 @@ export function useAnnotationHighlighter({
         return rangeFromTextOffsets(searchIndex, searchIndex + needle.length);
       }
 
-      const haystack = normalizeWithMap(fullText);
+      const haystack = normalizeWithMap(fullText, blockBoundaryOffsets(textNodes));
       const normalizedNeedle = normalizeWithMap(needle).text;
       const normalizedIndex = haystack.text.indexOf(normalizedNeedle);
       if (normalizedNeedle && normalizedIndex !== -1) {
@@ -857,8 +1031,12 @@ export function useAnnotationHighlighter({
     const highlighter = highlighterRef.current;
     if (!highlighter || !containerRef.current) return;
 
+    const attempted: string[] = [];
+    const unanchored: string[] = [];
+
     anns.forEach(ann => {
       if (ann.type === AnnotationType.GLOBAL_COMMENT) return;
+      attempted.push(ann.id);
 
       // Skip if already highlighted
       try {
@@ -886,7 +1064,7 @@ export function useAnnotationHighlighter({
           highlighter.fromStore(ann.startMeta, ann.endMeta, ann.originalText, ann.id);
           const restoredDoms = highlighter.getDoms(ann.id);
           if (restoredDoms && restoredDoms.length > 0) {
-            const restoredText = restoredDoms.map(dom => dom.textContent ?? '').join('');
+            const restoredText = paintedTextOf(restoredDoms as HTMLElement[]);
             if (
               verifyRestoredContent &&
               compactText(restoredText) !== compactText(ann.originalText)
@@ -910,6 +1088,7 @@ export function useAnnotationHighlighter({
       const range = findTextInDOM(ann.originalText);
       if (!range) {
         if (rejectedRestoreText !== null) {
+          unanchored.push(ann.id);
           onRestoreMismatchRef.current?.(ann, rejectedRestoreText);
         }
         console.warn(`Could not find text for annotation ${ann.id}: "${ann.originalText.slice(0, 50)}..."`);
@@ -918,12 +1097,20 @@ export function useAnnotationHighlighter({
 
       try {
         const textNodes: { node: Text; start: number; end: number }[] = [];
+        // Excluded chrome is rejected by the search that produced this range,
+        // so a run of it inside the range is not part of the quote; wrapping it
+        // anyway would paint a list marker the reviewer never selected (and,
+        // on the next reload, make the painted text disagree with the quote).
         const walker = document.createTreeWalker(
           range.commonAncestorContainer.nodeType === Node.TEXT_NODE
             ? range.commonAncestorContainer.parentNode!
             : range.commonAncestorContainer,
           NodeFilter.SHOW_TEXT,
-          null
+          {
+            acceptNode: (node) => isAnnotationExcludedTextNode(node)
+              ? NodeFilter.FILTER_REJECT
+              : NodeFilter.FILTER_ACCEPT,
+          },
         );
 
         let node: Text | null;
@@ -990,6 +1177,8 @@ export function useAnnotationHighlighter({
         console.warn(`Failed to apply highlight for annotation ${ann.id}:`, e);
       }
     });
+
+    if (attempted.length > 0) onRestoreReportRef.current?.({ attempted, unanchored });
   }, [findMathElementsForAnnotation, findTextInDOM, verifyRestoredContent]);
 
   const removeHighlight = useCallback((id: string) => {
@@ -1056,6 +1245,21 @@ export function useAnnotationHighlighter({
     });
 
     highlighterRef.current = highlighter;
+
+    // Stored positions can resolve into chrome the reviewer could never have
+    // selected; painting never enters such a subtree, so a boundary left there
+    // silently loses every run up to it. Snap both ends onto annotatable text
+    // before the range is built.
+    highlighter.hooks.Serialize.Restore.tap((...args: unknown[]) => {
+      const [, storedStart, storedEnd] = args as [unknown, RestoreBoundary, RestoreBoundary];
+      const root = containerRef.current;
+      if (!root || !storedStart || !storedEnd) return [storedStart, storedEnd];
+      const start = snapRestoredBoundary(root, storedStart, 1);
+      const end = snapRestoredBoundary(root, storedEnd, -1);
+      if (start === storedStart && end === storedEnd) return [storedStart, storedEnd];
+      if (restoreBoundariesCross(start, end)) return [storedStart, storedEnd];
+      return [start, end];
+    });
 
     highlighter.on(Highlighter.event.CREATE, ({ sources, type }: { sources: any[]; type?: string }) => {
       if (type === 'from-store') return;
