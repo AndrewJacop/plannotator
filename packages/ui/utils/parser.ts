@@ -1131,6 +1131,9 @@ export interface ElementContextExportOptions {
   /** Emit the live-app route line. The grouped export already prints a
    *  `## Page:` heading, so it passes false; a single copied entry passes true. */
   includeRoute?: boolean;
+  /** Print the identity lines WITHOUT the fenced outline, for model turns where
+   *  the 600-char outline is the expensive part. Default true. */
+  includeOutline?: boolean;
 }
 
 /** The agent-facing element block for a raw-HTML / live-app pinpoint: a
@@ -1141,8 +1144,9 @@ export interface ElementContextExportOptions {
 export const elementContextExportBlock = (ann: any, opts: ElementContextExportOptions = {}): string => {
   const context = ann?.elementContext;
   if (!context || typeof context !== 'object' || typeof context.tag !== 'string') return '';
+  const includeOutline = opts.includeOutline ?? true;
   let block = '';
-  if (typeof context.outline === 'string' && context.outline.trim()) {
+  if (includeOutline && typeof context.outline === 'string' && context.outline.trim()) {
     // Fence at 4 backticks; the boundary already defuses 3+ runs inside the
     // outline, and a 4-run here cannot be closed by anything the page wrote.
     const outline = context.outline.replace(/`{3,}/g, "'''").trim();
@@ -1248,7 +1252,11 @@ export const exportAnnotationEntry = (ann: any, opts: ElementContextExportOption
         output += `${commentHeadingLine(ann)}\n> ${ann?.text ?? ''}\n`;
       }
   }
-  output += elementContextExportBlock(ann, opts);
+  const resolvedOpts: ElementContextExportOptions = {
+    includeRoute: opts.includeRoute ?? true,
+    ...(opts.includeOutline !== undefined ? { includeOutline: opts.includeOutline } : {}),
+  };
+  output += elementContextExportBlock(ann, resolvedOpts);
   output += additionalTargetsExportBlock(ann);
   if (Array.isArray(ann?.images) && ann.images.length > 0) {
     output += `**Attached images:**\n`;
