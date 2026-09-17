@@ -1,6 +1,7 @@
 import type { Block, Annotation, CodeAnnotation, EditorAnnotation, ImageAttachment } from '../types';
 import { planDenyFeedback } from '@plannotator/core/feedback-templates';
 import { resolveReplyParents } from '@plannotator/core/annotation-threads';
+import { diagramAnchorLocationLine, parseDiagramAnchor } from '@plannotator/core/diagram-anchor';
 import { skillReferenceExportBlock } from './skillReferences';
 
 /**
@@ -1249,7 +1250,7 @@ export const exportAnnotationEntry = (ann: any, opts: ElementContextExportOption
         output += `[${ann.text}] ${commentHeadingLine(ann)}\n`;
         if (ann.quickLabelTip) output += `> ${ann.quickLabelTip}\n`;
       } else {
-        output += `${commentHeadingLine(ann)}\n> ${ann?.text ?? ''}\n`;
+        output += `${commentHeadingLine(ann)}\n${diagramLocationExportLine(ann)}> ${ann?.text ?? ''}\n`;
       }
   }
   const resolvedOpts: ElementContextExportOptions = {
@@ -1265,6 +1266,16 @@ export const exportAnnotationEntry = (ann: any, opts: ElementContextExportOption
     });
   }
   return output;
+};
+
+/** The location line under a comment made on a rendered diagram part:
+ *  `Diagram node Approve? (D), line 4` — the part's own id (what the agent
+ *  greps the fence for) and the DOCUMENT line that declares it. Emits
+ *  nothing for every other annotation, keeping their output byte-identical;
+ *  a malformed anchor (an older or foreign writer) is skipped, never thrown. */
+const diagramLocationExportLine = (ann: any): string => {
+  const anchor = ann?.diagramAnchor === undefined ? null : parseDiagramAnchor(ann.diagramAnchor);
+  return anchor === null ? '' : `${safeInline(diagramAnchorLocationLine(anchor), 600)}\n`;
 };
 
 const lineLabelForAnnotation = (blocks: Block[], ann: any): string | null => {
@@ -1435,11 +1446,13 @@ export const exportAnnotations = (
       case 'COMMENT':
         if (ann.isQuickLabel) {
           output += `[${ann.text}] ${commentHeadingLine(ann)}\n`;
+          output += diagramLocationExportLine(ann);
           if (ann.quickLabelTip) {
             output += `> ${ann.quickLabelTip}\n`;
           }
         } else {
           output += `${commentHeadingLine(ann)}\n`;
+          output += diagramLocationExportLine(ann);
           output += `> ${ann.text}\n`;
         }
         break;
@@ -1554,6 +1567,7 @@ export const exportLinkedDocAnnotations = (
 
         case 'COMMENT':
           output += `${commentHeadingLine(ann)}\n`;
+          output += diagramLocationExportLine(ann);
           output += `> ${ann.text}\n`;
           break;
 
