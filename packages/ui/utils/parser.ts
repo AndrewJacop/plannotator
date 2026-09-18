@@ -542,6 +542,33 @@ export const resolveReferenceLinks = (markdown: string): string => {
 };
 
 /**
+ * The block list for a whole-file diagram source (`plannotator annotate
+ * flow.mmd`): ONE code block carrying the file's raw text, which `Viewer`
+ * hands to the same `DiagramBlock` a ```mermaid fence in a plan produces.
+ * Everything downstream — diagram comments, the annotations rail, the export's
+ * `Diagram node <label> (<id>), line <n>` location line, drafts, restore — is
+ * the fence path unchanged.
+ *
+ * `startLine: 0` is the load-bearing part. `DiagramBlock` passes
+ * `block.startLine` as the viewer's `sourceLineOffset` and the codec adds it
+ * to the 1-based line WITHIN the diagram source, because in a document the
+ * fence's opening line sits one line above the diagram's first line. A diagram
+ * FILE has no fence, so its first line is document line 1: the offset must be
+ * 0, not the 1 a synthesized ```mermaid wrapper would produce.
+ */
+export const diagramDocumentBlocks = (text: string, kind: 'mermaid' | 'graphviz'): Block[] => [
+  {
+    id: 'block-0',
+    type: 'code',
+    content: text,
+    // `dot` is what isGraphvizLanguage reads for the Graphviz engine.
+    language: kind === 'graphviz' ? 'dot' : 'mermaid',
+    order: 1,
+    startLine: 0,
+  },
+];
+
+/**
  * A simplified markdown parser that splits content into linear blocks.
  * For a production app, we would use a robust AST walker (remark),
  * but for this demo, we want predictable text-anchoring.

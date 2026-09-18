@@ -1,6 +1,16 @@
 import type { DiagramAnchor } from '@plannotator/core/diagram-anchor';
+import type { DiagramRenderKind } from '@plannotator/core/annotatable';
 
 export type { DiagramAnchor } from '@plannotator/core/diagram-anchor';
+export type { DiagramRenderKind } from '@plannotator/core/annotatable';
+
+/**
+ * How a document's body is rendered. `markdown` and `html` are the original
+ * pair; the two diagram kinds are whole-file diagram sources (.mmd/.mermaid,
+ * .dot/.gv) that render as ONE diagram through the same engine a ```mermaid
+ * fence uses — see diagramDocumentBlocks in utils/parser.
+ */
+export type DocumentRenderAs = 'markdown' | 'html' | DiagramRenderKind;
 
 export enum AnnotationType {
   DELETION = 'DELETION',
