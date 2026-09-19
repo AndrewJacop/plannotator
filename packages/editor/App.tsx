@@ -3322,11 +3322,16 @@ const App: React.FC = () => {
   // so there is no input method or annotation mode left to switch.
   const toolstripVisible = useMemo(
     () =>
+      // A diagram document is excluded with HTML: its single block is
+      // `annotation-exclude`, so there is no text to drag-select and the
+      // Select/Markup input-method strip would be dead chrome over a diagram.
       !goalSetupMode && !isPlanDiffActive && !archive.archiveMode && !isEditingMarkdown && !isHtmlSurface
+      && diagramDocumentKind === null
       && (!isCompactTouchLayout || !(annotateSource === 'folder' && !markdown && !linkedDocHook.isActive)),
     [
       annotateSource,
       archive.archiveMode,
+      diagramDocumentKind,
       goalSetupMode,
       isHtmlSurface,
       isCompactTouchLayout,

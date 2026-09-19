@@ -202,6 +202,16 @@ export interface Block {
   order: number; // Sorting order
   startLine: number; // 1-based line number in source
   sourceLineCount?: number; // Number of source lines consumed when it differs from content lines
+  /**
+   * Line offset a diagram comment's `sourceLine` is measured from, when it
+   * differs from `startLine`. A ```mermaid fence in a document has its opening
+   * line ABOVE the diagram's first line, so `startLine` is the right offset
+   * there and this stays unset. A whole-file diagram source (.mmd/.dot) has no
+   * fence: its first line IS document line 1, so it sets 0 here while
+   * `startLine` keeps naming the block's own first line for the export's
+   * `(lines a–b)` label.
+   */
+  diagramSourceLineOffset?: number;
 }
 
 export interface DiffResult {
