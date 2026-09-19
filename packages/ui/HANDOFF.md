@@ -1321,8 +1321,171 @@ Tests: `utils/composerTokens.test.ts` (16, DOM-free) and
 `components/CommentPopover.mentionChips.test.tsx` (11, DOM-gated, in the
 workflow's DOM_TESTS step).
 
+## Annotation card header slot and mentions on the edit box (0.45.0)
+
+0.43.1 closed with an open question: "Editing an existing comment happens in
+`AnnotationPanel`'s card, a plain textarea that has never had an `@` picker…
+If you want the panel editor to pick people too, that is a separate prop on
+`AnnotationPanel` and worth asking for." It was asked for, so 0.45.0 adds it —
+together with the header twin of the panel's existing `renderCardFooter`.
+Same ruling as the four releases before it: opt-in host capabilities that
+change nothing for Plannotator's own users when they are not supplied.
+`packages/editor` and `packages/review-editor` have ZERO source diff in this
+release; core is UNCHANGED at `0.25.5`, so **ui 0.45.0 publishes alone**.
+
+### 1. `renderCardHeader` — the twin of `renderCardFooter`
+
+```ts
+renderCardHeader?: (annotation: Annotation) => React.ReactNode;
+```
+
+Rendered inside each plan-annotation card's HEADER row — the row carrying the
+type word, the `diff` / page / `Unanchored` chips and `author · time` — after
+the timestamp and before the built-in edit/delete cluster, which keeps the
+right edge on its `ml-auto`. That is the slot for a status stamp (resolved,
+needs reply, a reviewer badge); the footer remains the slot for reply and
+resolve UI.
+
+It follows the footer's contract line for line:
+
+- The wrapper is `[data-annotation-card-header="true"]` (the footer's
+  `[data-annotation-card-footer="true"]` spelled for the header — the attribute
+  the host queries and styles), and it stops `click` and `keydown`
+  propagation, so interacting with your stamp never selects the card.
+- **It renders under `readOnly`**, exactly as the footer does and for the same
+  reason: the contents are host-owned and a stamp is a read affordance. The
+  built-in mutation affordances stay hidden.
+- In the All-files grouped view it rides the OPEN document's cards only
+  (`group.isCurrent`), the footer's rule — a slot built from the open
+  document's state has nothing to say about another document's card.
+- Returning `null` / `undefined` / `false` for a card renders no wrapper for
+  that card. Omitting the prop renders no wrapper anywhere: there is no empty
+  container to lay out or style around.
+
+**Not on `CodeAnnotation` cards.** `CodeAnnotationCard` (the review-editor
+shape) takes no `renderCardFooter` either, so neither new prop was threaded
+into it; mirroring the footer is the rule. Ask if a host needs both there.
+
+### 2. `mentionSource` — the `@` picker on the card's edit box
+
+```ts
+mentionSource?: MentionSource;   // the same type, unchanged, from 0.43.0
+```
+
+Supplied on the panel and threaded to every plan-annotation card, it gives the
+card's EDIT textarea the same `@` machinery `CommentPopover` has:
+`useMentionAutocomplete` over the host's `people`, the portaled `MentionPicker`,
+the same grammar (`@` at a word boundary, never inside `a@b.com`), the same
+no-preselection keyboard rule (Enter is a newline until an arrow engages a
+row), the same `onMentionsChange`, and the same `onPickBlocked` no-access
+behavior (a blocked pick inserts NOTHING and the host shows its own dialog).
+
+**Key order at the textarea.** The menu is offered the key FIRST, then the
+card's own handlers run only if it did not consume the event:
+
+- `Escape` while the menu is open closes the MENU (the hook consumes it and
+  stops propagation). A second `Escape` cancels the edit, as it always did.
+- `Enter` with a row arrowed to inserts that person. `Enter` with nothing
+  active is untouched — still a newline.
+- `Mod+Enter` is never consumed by the menu (the hook declines any event
+  carrying a modifier), so save still saves.
+
+ARIA follows `CommentPopover`: `aria-autocomplete="list"` and
+`aria-haspopup="listbox"` exist only when a source is supplied,
+`aria-controls` / `aria-owns` only while the menu is open, and
+`aria-activedescendant` only while a row is active. With no source all five
+resolve to `undefined`, so the rendered attribute list is the one the edit box
+has always had.
+
+### 3. The save rule
+
+`handleSaveEdit` called `onEdit({ text })`. It now calls:
+
+```ts
+if (mentionSource && mentions.length > 0) onEdit({ text: editText, mentions });
+else onEdit({ text: editText });
+```
+
+which is the presence rule the creation composers already keep, one level
+down: **the key exists only when a source was supplied AND at least one id
+survived to save.** Never `mentions: []`, never the key with an `undefined`
+value — an untouched or pick-less edit calls `onEdit({ text })` byte for byte
+as it did in 0.44.0, so it can never wipe tags the annotation already carries.
+`source.onMentionsChange` fires from the hook exactly as it does in the
+composer. The Save BUTTON and `Mod+Enter` go through the same call.
+
+**"This edit session" is literal.** The edit box was extracted into
+`AnnotationEditComposer`, mounted only while a card is in edit mode, so the
+hook's tagged-people state lives and dies with one session: reopen the editor
+and nobody is picked, and a save with no new pick is `{ text }` again — even
+if the previous session's `@Label` token is still sitting in the body. That is
+the conservative direction (the host owns `mentions` from then on, 0.43.1 §4),
+and it is the same reason a restored draft starts with nobody tagged.
+
+### 4. No chips in the edit box (known difference, and the follow-up)
+
+A picked token renders as a CHIP in `CommentPopover` (0.44.0) and as plain
+text here. The chip layer is `ComposerTextarea`'s mirrored, aria-hidden
+overlay behind a transparent-text textarea, with scroll mirroring and IME
+handling; the card's edit box is a plain `<textarea>` with its own sizing and
+classes. Duplicating that overlay for one more textarea is exactly the "two
+mirrored layers" mistake 0.44.0 avoided.
+
+**Named follow-up: move the card's edit box onto `ComposerTextarea`.** That is
+the one change that gets chips here without a second overlay, and it is a
+visible change to a surface Plannotator itself renders — a separate PR with
+its own no-op argument, not a rider on a seam release.
+
+Everything else about mentions is inherited unchanged and documented in the
+0.43.x / 0.44.0 sections above, including the three limits: two labels that
+sanitize to the same token, a restored draft reporting no ids, and a label
+that is a prefix of another label.
+
+### 5. One internal module, not a new seam
+
+`components/MentionAutocomplete.tsx` (`MentionAutocompleteMenu` +
+`mentionActiveOptionId`) is the glue between a `useMentionAutocomplete` result
+and `MentionPicker` — the id→index lookup, the no-op hover and the
+`aria-activedescendant` string. It exists so the third mount did not become a
+third verbatim copy of the same fifteen lines; `CommentPopover`'s two mounts
+were moved onto it in the same change, with no DOM difference (proven below).
+It is **internal**: it is not on the supported-import list and hosts never
+touch it — they pass `mentionSource`.
+
+### The no-op guarantee, and how it is pinned
+
+The same components were mounted on `origin/main` and on this branch in one
+harness and their `outerHTML` diffed, with `addEventListener` and `setTimeout`
+counts taken across each mount. With NEITHER new prop supplied, all six are
+byte-identical with identical counts:
+
+| scenario | bytes | listeners | timers |
+| --- | --- | --- | --- |
+| empty panel | 733 | 140 | 0 |
+| nine cards (comment, deletion, global, quick label, external `source`, unanchored, `inReplyTo` reply, a card with `renderCardFooter`, a `diffContext` card) | 17543 | 141 | 0 |
+| the same panel `readOnly` | 7854 | 141 | 0 |
+| a card in EDIT mode | 18586 | 142 | 0 |
+| the All-files grouped view (two document groups) | 19629 | 141 | 0 |
+| `CommentPopover` (the module the glue refactor touched) | 3130 | 286 | 1 |
+
+The edit-mode row is the one that matters for the hook: mounted with
+`source: undefined`, `useMentionAutocomplete` registers no listener, opens no
+menu state, returns the frozen empty id array, and the picker renders nothing —
+one extra listener would have shown up as 143.
+
+On top of the diff, committed tests pin the structure rather than a snapshot:
+with neither prop there is no `[data-annotation-card-header]` on any card, the
+edit textarea carries none of the five mention ARIA attributes, typing `@`
+opens nothing, and `onEdit` is called with an updates object whose key list is
+exactly `['text']`.
+
+Tests (both DOM-gated, both added to the workflow's DOM_TESTS step):
+`components/AnnotationPanel.cardHeader.test.tsx` (6) and
+`components/AnnotationPanel.editMentions.test.tsx` (10).
+
 ## Publishing & versioning
 
+- **ui 0.45.0 (annotation card header slot + mentions on the card's edit box): `@plannotator/ui` only — `@plannotator/core` is UNCHANGED at `0.25.5`, so this publishes alone** (core 0.25.5 must already be published). Purely additive over 0.44.0, both props on `AnnotationPanel`: `renderCardHeader` (the header-row twin of `renderCardFooter`, wrapper `[data-annotation-card-header]`, renders under `readOnly`, open-document cards only in the All-files view) and `mentionSource` (the 0.43.0 type, applied to the card's EDIT box, saving `onEdit(id, { text, mentions })` only when a source was supplied and a pick survived). Nothing is removed, no new supported imports (`components/MentionAutocomplete` is internal glue), no export-, share- or archive-visible change, and Plannotator passes neither — `packages/editor` and `packages/review-editor` have zero source diff, and the panel is byte-identical to 0.44.0. Known difference from `CommentPopover`: no chips in the card's edit box (follow-up named in the section). See "Annotation card header slot and mentions on the edit box (0.45.0)".
 - **ui 0.44.0 (mention token chips in the composer): `@plannotator/ui` only — `@plannotator/core` is UNCHANGED at `0.25.5`, so this publishes alone** (core 0.25.5 must already be published). Purely additive over 0.43.2: the `@Label` tokens a `mentionSource` composer inserted render as chips in the composer's existing highlight overlay, `MentionSource.tokenClassName?` lets a host restyle them (under the metric rule), `useMentionAutocomplete` also returns the surviving `mentions`, and `utils/composerTokens` joins the supported-import list. Nothing is removed, no export-, share- or archive-visible change, and Plannotator passes none of it — with neither `mentionSource` nor `skillReferences` the composer is byte-identical to 0.43.2. See "Mention token chips in the composer (0.44.0)".
 - **ui 0.43.1 (`mentionSource` on the viewers): `@plannotator/ui` only — `@plannotator/core` is UNCHANGED at `0.25.5`, so this publishes alone** (core 0.25.5 must already be published). Purely additive over 0.43.0: `mentionSource` on `Viewer` and `HtmlViewer` (forwarded to every comment composer each mounts) and the optional `Annotation.mentions` field the picked ids land on, set only when a source was supplied and a token survived. Nothing is removed, no new modules, no export-, share- or archive-visible change, and Plannotator passes none of it. See "`mentionSource` on the viewers (0.43.1)".
 - **ui 0.43.0 (host toolbar seams): `@plannotator/ui` only — `@plannotator/core` is UNCHANGED at `0.25.5`, so this publishes alone** (core 0.25.5 must already be published). Purely additive: `selectionActions` + `quickLabels` on `AnnotationToolbar` (forwarded by `Viewer`; `selectionActions` also by `HtmlViewer`), `mentionSource` on `CommentPopover`, an optional third `mentions` argument on that component's `onSubmit`, and the new supported modules `utils/selectionActions`, `utils/mentions`, `components/SelectionActionsDropdown`, `components/MentionPicker`, `hooks/useMentionAutocomplete`. Nothing is removed and Plannotator passes none of it. See "Host toolbar seams (0.43.0)".
