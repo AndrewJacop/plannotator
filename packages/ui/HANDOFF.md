@@ -214,7 +214,7 @@ We deliberately did **not** restructure the exports map in this PR (move-don't-r
 | `hooks/useHtmlRefresh` | Re-fetch a rendered HTML document through a host-supplied `fetchSnapshot`, remount the viewer on a reload generation, acknowledge the restore report once. See "HTML annotation parity seams". |
 | `shortcuts` (`useHtmlAnnotateShortcuts`, `defineShortcutScope`, the scope registry) | The declarative keyboard-shortcut engine and the per-surface scopes, including the HTML annotate scope (Mod+Shift+A toggles annotate mode, Mod+Shift+X shows/hides the tools). Pure: React plus `utils/platform`; no backend. |
 | `utils/selectionActions` + `components/SelectionActionsDropdown` | The host selection-actions seam: `SelectionAction`, `SelectionActionContext`, the pure `buildSelectionActionContext`, and the dropdown `AnnotationToolbar` opens. Pure React; no backend. *(Blessed in 0.43.0.)* |
-| `utils/mentions` + `components/MentionPicker` + `hooks/useMentionAutocomplete` | The `@` mention seam behind `CommentPopover`'s `mentionSource`: the pure grammar (`mentionTrigger`, `mentionMatches`, `applyMentionPick`, `survivingMentions`), the portaled picker, and the keyboard state machine. Pure React; no backend. *(Blessed in 0.43.0.)* |
+| `utils/mentions` + `components/MentionPicker` + `hooks/useMentionAutocomplete` | The `@` mention seam behind `CommentPopover`'s `mentionSource` (and, since 0.43.1, `Viewer`'s and `HtmlViewer`'s): the pure grammar (`mentionTrigger`, `mentionMatches`, `applyMentionPick`, `survivingMentions`), the portaled picker, and the keyboard state machine. Pure React; no backend. *(Blessed in 0.43.0.)* |
 | `utils/inputMethod` (`getInputMethod`, `saveInputMethod`, `refreshInputMethodStamp`) | The per-surface pinpoint/drag input-method preference with its TTL. Persists through the `storageBackend` seam; no backend of its own. |
 | `utils/codeHighlight` / `utils/codeBlockMark` / `utils/syntaxTheme` | The Shiki-based fence highlighter, swap-surviving annotation marks, and palette→Shiki theme mapping. Replaces all `.hljs` styling. *(Blessed in 0.29.0.)* |
 | `utils/math` (`loadMathRenderer`, `getMathRenderer`, `getMathRendererSource`, `setMathRenderer`, `setMathRendererLoader`, `getMathRendererLoader`, `resetMathRenderer`) and `utils/math-eager` | The math renderer slot and its eager KaTeX registration. Import `utils/math-eager` for synchronous typesetting on the first commit; call `loadMathRenderer()` to pre-warm the lazy path. `resetMathRenderer()` empties the slot and keeps the registered loader; `setMathRendererLoader(null)` drops it. See "Lazy renderers and eager entries". |
@@ -1038,6 +1038,7 @@ the people and what a mention means.
 - `CommentPopover` (`mentionSource`). `Viewer` does NOT forward it: the viewer
   owns several composers and a per-composer decision belongs to the host that
   renders them. Ask if you would rather pass it once on `Viewer`.
+  **Answered in 0.43.1 — both viewers now forward it; see the next section.**
 
 ### The no-op guarantee, and how it is pinned
 
@@ -1058,8 +1059,118 @@ Tests: `utils/mentions.test.ts` (11, DOM-free),
 `components/AnnotationToolbar.selectionActions.test.tsx` (8, DOM-gated),
 `components/CommentPopover.mentionSource.test.tsx` (11, DOM-gated).
 
+## `mentionSource` on the viewers (0.43.1)
+
+0.43.0 left `mentionSource` on `CommentPopover` alone, with an open question
+("ask if you would rather pass it once on `Viewer`"). The answer is yes, so
+0.43.1 threads it one level up and gives the picked ids somewhere to land.
+Same ruling as 0.43.0: an opt-in host capability that changes nothing for
+Plannotator's own users when it is not supplied. `packages/editor` and
+`packages/review-editor` are untouched by this release; core is UNCHANGED at
+`0.25.5`, so **ui 0.43.1 publishes alone**.
+
+### 1. The prop
+
+`Viewer` and `HtmlViewer` each gain `mentionSource?: MentionSource` — the same
+type, unchanged, from `@plannotator/ui/types` (also `utils/mentions`) — and
+each forwards it to EVERY comment composer it mounts:
+
+- `Viewer` → the text-selection composer (`useAnnotationHighlighter`'s) and the
+  global / code-block one.
+- `HtmlViewer` → the pinpoint (selection) composer and the global one.
+
+A host that wants mentions on a surface passes one prop instead of reaching
+into the viewer's composers. Passing it directly to a `CommentPopover` you
+mount yourself still works and is unchanged.
+
+Deliberately NOT threaded: `plan-diff/PlanCleanDiffView`, `CodeFilePopout` and
+`goal-setup/GoalSetupSurface` mount composers too, but they are Plannotator-only
+surfaces off the supported-import list — the same line 0.43.0 drew for
+`selectionActions`. Ask if a host needs one.
+
+### 2. `Annotation.mentions` — where the ids go
+
+```ts
+interface Annotation {
+  // …
+  mentions?: readonly string[];   // opaque host ids, additive
+}
+```
+
+`onSubmit(text, images?, mentions?)` used to stop at the viewer: the third
+argument was received and dropped. It now rides onto the annotation the viewer
+hands `onAddAnnotation`, on every creation path behind those composers
+(`createAnnotationFromSource`, `createAnnotationFromMathSource`, the code-block
+path, both global comments, and the HTML pinpoint comment).
+
+**The presence rule** is the whole no-op guarantee, so it is worth stating
+exactly: the key exists only when a `mentionSource` was supplied AND at least
+one id survived to submit. No source → no third argument → no key. A source
+whose tokens the author deleted before submitting → `[]` from the composer →
+still no key, never an empty array. Every write is a conditional spread
+(`...(mentions && mentions.length > 0 ? { mentions } : {})`), not `mentions,`,
+because the bare shorthand would put the key on the object with an `undefined`
+value and `'mentions' in ann` would start answering true for Plannotator.
+
+The ids are opaque to the package. Mapping one to a person, notifying them, or
+rendering an avatar is entirely the host's business — `MentionPerson.id` is
+reported back verbatim, exactly as it was handed in.
+
+### 3. What the field does NOT touch
+
+An id from a host's directory means nothing outside that host, so the field
+stays out of everything Plannotator produces:
+
+- **Export.** `exportAnnotations`, `exportAnnotationEntry` and
+  `exportLinkedDocAnnotations` never print it: an annotation carrying
+  `mentions` exports byte-identically to the same annotation without it
+  (`utils/parser.mentions.test.ts`). The readable `@Label` token is in the
+  comment body, which is what the coding agent reads.
+- **Share links.** Dropped exactly like `htmlAnchor`, `elementContext` and
+  `diagramAnchor` — the compact tuple format never carried extra fields, and a
+  round trip restores `mentions: undefined` (pinned in
+  `utils/sharing.multiTarget.test.ts`).
+- **External annotations.** `POST /api/external-annotations` builds its rows
+  from an explicit field list and `PATCH` from an allowlist, so a `mentions`
+  key on the wire is dropped as any unknown key is. No change was needed in
+  `@plannotator/core/external-annotation`, in either runtime.
+- **The feedback archive.** `packages/shared/feedback-archive.ts` copies named
+  fields into its record; `mentions` is not one of them and never reaches
+  `index.jsonl` or a sidecar. No change needed.
+- **Drafts** carry it for free (annotations are opaque JSON to the draft
+  transport), which is the behavior a host wants: a restored draft still knows
+  who was named.
+
+### 4. Edit and reply paths
+
+There is none to thread in these two viewers: both `Viewer` composers and both
+`HtmlViewer` composers are CREATION composers. Editing an existing comment
+happens in `AnnotationPanel`'s card, a plain textarea that has never had an
+`@` picker and takes no `mentionSource`; replies (`inReplyTo`) are created by
+the WebMCP catalog, not by a composer. So no annotation's `mentions` is
+rewritten after creation by this package — a host that edits a comment owns
+the field from then on. If you want the panel editor to pick people too, that
+is a separate prop on `AnnotationPanel` and worth asking for.
+
+### No-op guarantee, and how it is pinned
+
+With no `mentionSource`, both viewers mount the composers they always did, no
+`@` listener is registered, no picker DOM exists, and the annotation object
+handed to `onAddAnnotation` has no `mentions` key at all (`'mentions' in ann`
+is false, asserted rather than `toBeUndefined()` — the difference between the
+conditional spread and the bare shorthand is invisible to the latter).
+
+Tests (both DOM-gated, both in the workflow's DOM_TESTS step):
+`components/Viewer.mentionSource.test.tsx` (5) drives the real Viewer — the
+selection composer through the Vim toolbar's type-to-comment gesture and the
+global composer through its button — and
+`components/html-viewer/HtmlViewer.mentionSource.test.tsx` (3) drives the real
+HtmlViewer through a bridge pinpoint message and its global button. Plus the two DOM-free pins in
+§3 above.
+
 ## Publishing & versioning
 
+- **ui 0.43.1 (`mentionSource` on the viewers): `@plannotator/ui` only — `@plannotator/core` is UNCHANGED at `0.25.5`, so this publishes alone** (core 0.25.5 must already be published). Purely additive over 0.43.0: `mentionSource` on `Viewer` and `HtmlViewer` (forwarded to every comment composer each mounts) and the optional `Annotation.mentions` field the picked ids land on, set only when a source was supplied and a token survived. Nothing is removed, no new modules, no export-, share- or archive-visible change, and Plannotator passes none of it. See "`mentionSource` on the viewers (0.43.1)".
 - **ui 0.43.0 (host toolbar seams): `@plannotator/ui` only — `@plannotator/core` is UNCHANGED at `0.25.5`, so this publishes alone** (core 0.25.5 must already be published). Purely additive: `selectionActions` + `quickLabels` on `AnnotationToolbar` (forwarded by `Viewer`; `selectionActions` also by `HtmlViewer`), `mentionSource` on `CommentPopover`, an optional third `mentions` argument on that component's `onSubmit`, and the new supported modules `utils/selectionActions`, `utils/mentions`, `components/SelectionActionsDropdown`, `components/MentionPicker`, `hooks/useMentionAutocomplete`. Nothing is removed and Plannotator passes none of it. See "Host toolbar seams (0.43.0)".
 - **core 0.25.5 / ui 0.42.0 (diagram FILES, `.mmd`/`.mermaid`/`.dot`/`.gv`): additive on both packages, so the next publish is core-first.** `@plannotator/core/annotatable` gains `DiagramRenderKind`, `diagramRenderKindForPath`, `isDiagramRenderKind` and `annotateDiagramRenderKind`, and its built-in annotatable sets now include the four diagram extensions (`shouldStripFrontmatter` returns false for them — Mermaid's `--- … ---` config block is content — and they can no longer be registered through `markdownExtensions`). `@plannotator/ui` gains `diagramDocumentBlocks(text, kind)` on `utils/parser` (the ONE `code` block a whole-file diagram source renders as), `shareableDocumentMarkdown(markdown, renderAs)` on `utils/sharing`, the `DocumentRenderAs` type on `types` (`'markdown' | 'html' | DiagramRenderKind`, re-exporting core's kind), and an optional `Block.diagramSourceLineOffset` that `DiagramBlock` prefers over `Block.startLine` when resolving a diagram comment's `sourceLine` (unset on every parser-produced fence, so fences are byte-identical). `useLinkedDoc`'s `renderAs`/`setRenderAs`/`LinkedDocLoadData.renderAs` widen from `'markdown' | 'html'` to `DocumentRenderAs` — source-compatible for a host that only ever passes the old two, but a host whose own state is typed `'markdown' | 'html'` must widen its setter. Since core changes, **publish `core` first** and update UI's exact core dependency before packing ui.
 - **The current pair is `@plannotator/ui` `0.41.2` on `@plannotator/core` `0.25.4`.** Core is UNCHANGED from 0.41.1, so 0.41.2 publishes alone (`ui` only; core 0.25.4 must already be published). 0.41.2 ships the palette-derived Mermaid node shadow at a default of 70% (`DEFAULT_MERMAID_SHADOW_AMOUNT`) and the Settings → Display "Diagram Shadow" control (0 / 40 / 70 / 100); see "Node shadow (the one thing that is not a colour)" under "Theme-aware Mermaid diagrams (0.40.0)" for the mapping — no API removal, only additive exports (`buildMermaidShadow`, `DEFAULT_MERMAID_SHADOW_AMOUNT`, `utils/diagramShadow`).
