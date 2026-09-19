@@ -9,6 +9,9 @@ import { hasUnsavedCommentContent } from '../utils/commentContent';
 import { useSkillReferenceAutocomplete } from '../hooks/useSkillReferenceAutocomplete';
 import { HumanOnlySkillNotice, SkillReferenceMenu } from './SkillReferenceMenu';
 import type { SkillReferenceToken } from '../utils/skillReferences';
+import { useMentionAutocomplete } from '../hooks/useMentionAutocomplete';
+import { MentionPicker } from './MentionPicker';
+import type { MentionSource } from '../utils/mentions';
 import {
   hasPrimaryCoarsePointer,
   shouldUseExpandedComposer,
@@ -51,8 +54,13 @@ interface CommentPopoverProps {
   isGlobal: boolean;
   /** Pre-filled text (for type-to-comment) */
   initialText?: string;
-  /** Called on submit with comment text and optional images */
-  onSubmit: (text: string, images?: ImageAttachment[]) => void;
+  /**
+   * Called on submit with comment text and optional images. The third
+   * argument carries the mention ids the body still tags, and is passed ONLY
+   * when a `mentionSource` is supplied — without one the call is the two
+   * arguments it has always been.
+   */
+  onSubmit: (text: string, images?: ImageAttachment[], mentions?: readonly string[]) => void;
   /**
    * One-click "Looks good" action (comment-only HTML/live surfaces, where
    * pinpoint clicks open this composer directly and never see the selection
@@ -77,6 +85,13 @@ interface CommentPopoverProps {
   askAIDisabled?: boolean;
   /** Opt-in: `/` and `$` skill-reference autocomplete (document UI surfaces). Off by default. */
   skillReferences?: boolean;
+  /**
+   * Opt-in host capability: an `@` mention source for this composer. Supplies
+   * the people, an optional honest-empty notice, and optional callbacks for
+   * the surviving mention ids and for a picked person the host blocks.
+   * Absent → no listener, no picker, no extra DOM: byte-identical composer.
+   */
+  mentionSource?: MentionSource;
   /** Opt-in (HTML multi-select): selected targets rendered as horizontally
    *  scrollable chips above the textarea. Absent → byte-identical composer. */
   targetChips?: CommentTargetChip[];
@@ -166,6 +181,7 @@ export const CommentPopover: React.FC<CommentPopoverProps> = ({
   askAIContext,
   askAIDisabled = false,
   skillReferences = false,
+  mentionSource,
   targetChips,
   onRemoveTargetChip,
   onHoverTargetChip,
@@ -451,14 +467,24 @@ export const CommentPopover: React.FC<CommentPopoverProps> = ({
     </div>
   ) : null;
 
+  const mentionAc = useMentionAutocomplete({
+    text,
+    setText,
+    textareaRef,
+    source: mentionSource,
+  });
+
   const handleSubmit = useCallback(() => {
     const canSubmitEmpty = allowEmptySubmit && initialText.trim().length > 0;
     if (hasUnsavedContent || canSubmitEmpty) {
       if (draftKey) draftStore.delete(draftKey);
-      onSubmit(text, allowImages && images.length > 0 ? images : undefined);
+      const submitImages = allowImages && images.length > 0 ? images : undefined;
+      // Without a mentionSource this is the two-argument call it always was.
+      if (mentionSource) onSubmit(text, submitImages, mentionAc.mentionIds);
+      else onSubmit(text, submitImages);
       restoreOpeningFocus();
     }
-  }, [text, images, onSubmit, draftKey, allowImages, allowEmptySubmit, initialText, hasUnsavedContent, restoreOpeningFocus]);
+  }, [text, images, onSubmit, draftKey, allowImages, allowEmptySubmit, initialText, hasUnsavedContent, restoreOpeningFocus, mentionSource, mentionAc.mentionIds]);
 
   const handleAskAI = useCallback(async () => {
     const question = text.trim();
@@ -492,7 +518,12 @@ export const CommentPopover: React.FC<CommentPopoverProps> = ({
     textareaRef,
     enabled: skillReferences,
   });
+  const readComposerCaret = useCallback(() => {
+    skillAc.onSelect();
+    mentionAc.onSelect();
+  }, [mentionAc, skillAc]);
   const skillListboxId = `skill-reference-listbox-${useId().replace(/:/g, '')}`;
+  const mentionListboxId = `${skillListboxId}-mentions`;
   const activeSkillOptionId =
     skillAc.menu?.activeIndex === null || skillAc.menu?.activeIndex === undefined
       ? undefined
@@ -500,6 +531,7 @@ export const CommentPopover: React.FC<CommentPopoverProps> = ({
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (skillAc.onKeyDown(e)) return;
+    if (mentionAc.onKeyDown(e)) return;
     if (e.key === 'Escape') {
       e.stopPropagation();
       if (mode === 'dialog') {
@@ -634,9 +666,9 @@ export const CommentPopover: React.FC<CommentPopoverProps> = ({
             <ComposerTextarea
               textareaRef={focusOnMountRef}
               value={text}
-              onChange={(e) => { setText(e.target.value); skillAc.onSelect(); }}
+              onChange={(e) => { setText(e.target.value); readComposerCaret(); }}
               onKeyDown={handleKeyDown}
-              onSelectCaret={skillAc.onSelect}
+              onSelectCaret={readComposerCaret}
               placeholder={isGlobal ? 'Add a global comment...' : 'Add a comment...'}
               sizeClassName="min-h-32 max-h-full"
               skillReferences={skillReferences}
@@ -646,6 +678,20 @@ export const CommentPopover: React.FC<CommentPopoverProps> = ({
               activeOptionId={activeSkillOptionId}
             />
             <HumanOnlySkillNotice skills={skillAc.humanOnlyReferences} />
+            {mentionAc.menu && (
+              <MentionPicker
+                id={mentionListboxId}
+                people={mentionAc.menu.items}
+                emptyNotice={mentionAc.menu.emptyNotice}
+                active={mentionAc.menu.activeIndex}
+                anchor={mentionAc.menu.anchor}
+                onPick={(person) => {
+                  const index = mentionAc.menu?.items.findIndex((p) => p.id === person.id) ?? -1;
+                  if (index >= 0) mentionAc.select(index);
+                }}
+                onHover={() => {}}
+              />
+            )}
           </div>
 
           {/* Footer — DOM order sets tab order (Save first); row-reverse keeps the visual layout unchanged */}
@@ -784,9 +830,9 @@ export const CommentPopover: React.FC<CommentPopoverProps> = ({
         <ComposerTextarea
           textareaRef={focusOnMountRef}
           value={text}
-          onChange={(e) => { setText(e.target.value); skillAc.onSelect(); }}
+          onChange={(e) => { setText(e.target.value); readComposerCaret(); }}
           onKeyDown={handleKeyDown}
-          onSelectCaret={skillAc.onSelect}
+          onSelectCaret={readComposerCaret}
           placeholder={isGlobal ? 'Add a global comment...' : 'Add a comment...'}
           sizeClassName="max-h-64 min-h-[4.5rem]"
           skillReferences={skillReferences}
@@ -796,6 +842,20 @@ export const CommentPopover: React.FC<CommentPopoverProps> = ({
           activeOptionId={activeSkillOptionId}
         />
         <HumanOnlySkillNotice skills={skillAc.humanOnlyReferences} />
+        {mentionAc.menu && (
+          <MentionPicker
+            id={mentionListboxId}
+            people={mentionAc.menu.items}
+            emptyNotice={mentionAc.menu.emptyNotice}
+            active={mentionAc.menu.activeIndex}
+            anchor={mentionAc.menu.anchor}
+            onPick={(person) => {
+              const index = mentionAc.menu?.items.findIndex((p) => p.id === person.id) ?? -1;
+              if (index >= 0) mentionAc.select(index);
+            }}
+            onHover={() => {}}
+          />
+        )}
       </div>
 
       {/* Footer — same DOM-order/row-reverse pattern as the dialog footer above */}
