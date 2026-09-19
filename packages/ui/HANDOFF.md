@@ -215,6 +215,7 @@ We deliberately did **not** restructure the exports map in this PR (move-don't-r
 | `shortcuts` (`useHtmlAnnotateShortcuts`, `defineShortcutScope`, the scope registry) | The declarative keyboard-shortcut engine and the per-surface scopes, including the HTML annotate scope (Mod+Shift+A toggles annotate mode, Mod+Shift+X shows/hides the tools). Pure: React plus `utils/platform`; no backend. |
 | `utils/selectionActions` + `components/SelectionActionsDropdown` | The host selection-actions seam: `SelectionAction`, `SelectionActionContext`, the pure `buildSelectionActionContext`, and the dropdown `AnnotationToolbar` opens. Pure React; no backend. *(Blessed in 0.43.0.)* |
 | `utils/mentions` + `components/MentionPicker` + `hooks/useMentionAutocomplete` | The `@` mention seam behind `CommentPopover`'s `mentionSource` (and, since 0.43.1, `Viewer`'s and `HtmlViewer`'s): the pure grammar (`mentionTrigger`, `mentionMatches`, `applyMentionPick`, `survivingMentions`), the portaled picker, and the keyboard state machine. Pure React; no backend. *(Blessed in 0.43.0.)* |
+| `utils/composerTokens` | The comment composer's token highlight ranges: `skillTokenRanges`, `mentionTokenRanges`, `mergeTokenRanges` and `ComposerTokenRange`. Pure (no DOM, no styling) — the one place that decides which bytes of a composer's text are a token and which source wins when two claim the same ones. *(Blessed in 0.44.0.)* |
 | `utils/inputMethod` (`getInputMethod`, `saveInputMethod`, `refreshInputMethodStamp`) | The per-surface pinpoint/drag input-method preference with its TTL. Persists through the `storageBackend` seam; no backend of its own. |
 | `utils/codeHighlight` / `utils/codeBlockMark` / `utils/syntaxTheme` | The Shiki-based fence highlighter, swap-surviving annotation marks, and palette→Shiki theme mapping. Replaces all `.hljs` styling. *(Blessed in 0.29.0.)* |
 | `utils/math` (`loadMathRenderer`, `getMathRenderer`, `getMathRendererSource`, `setMathRenderer`, `setMathRendererLoader`, `getMathRendererLoader`, `resetMathRenderer`) and `utils/math-eager` | The math renderer slot and its eager KaTeX registration. Import `utils/math-eager` for synchronous typesetting on the first commit; call `loadMathRenderer()` to pre-warm the lazy path. `resetMathRenderer()` empties the slot and keeps the registered loader; `setMathRendererLoader(null)` drops it. See "Lazy renderers and eager entries". |
@@ -1171,8 +1172,142 @@ global composer through its button — and
 HtmlViewer through a bridge pinpoint message and its global button. Plus the two DOM-free pins in
 §3 above.
 
+## Mention token chips in the composer (0.44.0)
+
+0.43.0-0.43.2 gave the composer an `@` picker; the token it inserted was
+then plain text in the textarea. 0.44.0 paints it as a **chip**, so a tag
+looks the same in the picker row, in the input, and in the comment the host
+posts. Same ruling as the three releases before it: an opt-in host
+capability that changes nothing for Plannotator's own users when it is not
+supplied. `packages/editor` and `packages/review-editor` are untouched; core
+is UNCHANGED at `0.25.5`, so **ui 0.44.0 publishes alone**.
+
+### One overlay, two sources (the refactor)
+
+`ComposerTextarea` already used exactly the right technique for skill
+references: a mirrored, aria-hidden overlay rendered BEHIND a
+transparent-text textarea (a textarea cannot style substrings), sharing the
+font/padding/wrapping metrics and mirroring scroll, with `.pn-ref-composing`
+hiding it during IME composition. Chips do not add a second overlay — two
+mirrored layers could never stay pixel-aligned with each other, and only one
+of them could own the scroll sync. Instead the overlay became a TOKEN
+HIGHLIGHT LAYER fed by a merged list of ranges, and it turns on when EITHER
+source is active.
+
+The range computation moved out of the render loop into
+`utils/composerTokens` (pure — no DOM, no styling, no React):
+
+- `skillTokenRanges(tokens)` — today's positioned occurrences, unchanged.
+- `mentionTokenRanges(text, people)` — every occurrence of each surviving
+  person's readable `@Label` token.
+- `mergeTokenRanges(text, groups)` — `groups` in priority order; drops
+  ranges outside `[0, text.length)` and empty/inverted ones, then keeps
+  earlier `start`, longer at the same start, earlier group at the same start
+  and length, and drops anything beginning inside a range already kept.
+  Nothing nests, so the overlay stays a flat sequence of spans.
+
+With a single skill source this reproduces the pre-refactor loop exactly
+(which dropped a token whose `start` fell behind the cursor or whose `end`
+ran past the text). The component keeps the Tailwind classes and the `data-*`
+attributes in `renderTokenSpan`, both so the class scanner still sees them
+and so the metric rule below is read with the classes it governs.
+
+### The chip
+
+A chip is painted only for a person the author PICKED whose token still
+survives — `useMentionAutocomplete` now also returns those survivors as
+`mentions` (the same frozen empty array as `mentionIds` with no source), so
+the ranges come from the mention id model and never from a regex over
+arbitrary `@words`. Editing one byte of a token un-chips it in the same
+render that drops the id from `onMentionsChange`, so the chips, the body and
+the reported ids can never disagree about who was named.
+
+```
+<span data-mention-token="user_1" data-mention-kind="user" class="…">@Marcus Chen</span>
+```
+
+- `data-mention-token` is the opaque host id, `data-mention-kind` is
+  `user | agent` — the host's styling hook.
+- `MentionSource.tokenClassName?: string` (new, optional) is appended to the
+  span verbatim for a host that wants its own look.
+- The package default is `text-primary bg-primary/15` and a 3px radius —
+  the skill-reference treatment one shade stronger, so the two token kinds in
+  one overlay read as siblings. Deliberately no ring: every class it uses is
+  one the package already emitted, so a host's generated CSS is unchanged
+  (and so is the portable guide viewer's bundle — `guide-viewer-manifest.ts`
+  needed no regeneration, which is why core is untouched).
+
+**THE METRIC RULE (and it is the host's too).** A chip may change COLOR,
+BACKGROUND, BORDER-RADIUS, BOX-SHADOW and TEXT-DECORATION only. Padding,
+margin, border width, font-weight, letter-spacing and font-size all move a
+glyph, and the overlay's glyphs must coincide with the textarea's own layout
+or the caret drifts away from the text it is painting. A pill's horizontal
+breathing room is faked with `box-shadow: 0 0 0 Npx <background>`, which
+paints without occupying space — that is the way to a pill look through
+`tokenClassName`, and the reason the rule bans padding rather than the
+appearance.
+
+### What did NOT change
+
+The overlay exists for the whole life of a mention composer, not only once
+somebody is tagged, so the first pick never swaps the textarea element under
+the caret. IME composition, scroll sync, the resize gutter, the placeholder,
+the `/` + `$` skill autocomplete and its menu, the Alt-typing path, drafts
+(`initialDraft` / `draftKey`), image attachments and `Mod+Enter` submit are
+all untouched, and `onSubmit(text, images?, mentions?)` is the same call.
+`Viewer` and `HtmlViewer` needed no change at all: they already forward
+`mentionSource` (0.43.1), and the chips are inside the composer it reaches.
+
+Two inherited limitations are worth stating rather than fixing here:
+
+- **Two people whose labels sanitize to the same token** are
+  indistinguishable in a plain-text body, so the FIRST of them listed owns
+  every occurrence of it. That is the same first-match rule
+  `survivingMentions` already applies to the ids; it renders and never
+  throws.
+- **A restored draft has no chips** until the author picks again, because
+  the survivors come from the picks made in THIS composer — exactly the same
+  reason `onMentionsChange` reports `[]` for a restored draft today (0.43.x
+  behavior, unchanged).
+
+### The no-op guarantee, and how it is pinned
+
+The same components were mounted on `origin/main` and on this branch in one
+harness and their `outerHTML` diffed:
+
+- **No `mentionSource`, no `skillReferences`:** the composer is
+  byte-identical — 3192 bytes, and the same `addEventListener` and
+  `setTimeout` counts (287 / 1 in that harness). No overlay element exists
+  at all.
+- **`skillReferences` only:** the popover (4821 bytes) and the overlay
+  itself (634 bytes) are byte-identical, same listener and timer counts
+  (150 / 1). `data-skill-ref-overlay="true"` is written only when
+  `skillReferences` is on, so a skill composer's overlay keeps the exact
+  attribute list it had; a mentions-only overlay is found by its
+  `data-pn-mobile-editable-mirror` attribute instead.
+- A mention composer's overlay costs exactly one extra listener (the
+  textarea's `scroll`, which is what mirrors the layer) — the same one a
+  skill composer has always paid.
+- **The portable guide viewer's build is byte-identical** (`viewer.*.js` and
+  `viewer.*.css` hashes and their SRI unchanged against `origin/main`), so
+  `packages/core/guide-viewer-manifest.ts` is in sync and core is untouched.
+  That is also why the default chip reuses classes the package already
+  emitted instead of introducing one.
+
+**Real-browser metric proof** (headless Chromium, throwaway Vite harness):
+typing `Nice catch @ma`, picking Marcus and continuing to type, the chip's
+bounding rect and the textarea's own text run for that token agree to
+**0.000px** on both axes and in width — at 420px and 1200px, on a wrapped
+line (3 lines above it) and with the textarea scrolled (`scrollTop` 40) —
+and the caret x after the token is **0.016px** from the span's end.
+
+Tests: `utils/composerTokens.test.ts` (16, DOM-free) and
+`components/CommentPopover.mentionChips.test.tsx` (11, DOM-gated, in the
+workflow's DOM_TESTS step).
+
 ## Publishing & versioning
 
+- **ui 0.44.0 (mention token chips in the composer): `@plannotator/ui` only — `@plannotator/core` is UNCHANGED at `0.25.5`, so this publishes alone** (core 0.25.5 must already be published). Purely additive over 0.43.2: the `@Label` tokens a `mentionSource` composer inserted render as chips in the composer's existing highlight overlay, `MentionSource.tokenClassName?` lets a host restyle them (under the metric rule), `useMentionAutocomplete` also returns the surviving `mentions`, and `utils/composerTokens` joins the supported-import list. Nothing is removed, no export-, share- or archive-visible change, and Plannotator passes none of it — with neither `mentionSource` nor `skillReferences` the composer is byte-identical to 0.43.2. See "Mention token chips in the composer (0.44.0)".
 - **ui 0.43.1 (`mentionSource` on the viewers): `@plannotator/ui` only — `@plannotator/core` is UNCHANGED at `0.25.5`, so this publishes alone** (core 0.25.5 must already be published). Purely additive over 0.43.0: `mentionSource` on `Viewer` and `HtmlViewer` (forwarded to every comment composer each mounts) and the optional `Annotation.mentions` field the picked ids land on, set only when a source was supplied and a token survived. Nothing is removed, no new modules, no export-, share- or archive-visible change, and Plannotator passes none of it. See "`mentionSource` on the viewers (0.43.1)".
 - **ui 0.43.0 (host toolbar seams): `@plannotator/ui` only — `@plannotator/core` is UNCHANGED at `0.25.5`, so this publishes alone** (core 0.25.5 must already be published). Purely additive: `selectionActions` + `quickLabels` on `AnnotationToolbar` (forwarded by `Viewer`; `selectionActions` also by `HtmlViewer`), `mentionSource` on `CommentPopover`, an optional third `mentions` argument on that component's `onSubmit`, and the new supported modules `utils/selectionActions`, `utils/mentions`, `components/SelectionActionsDropdown`, `components/MentionPicker`, `hooks/useMentionAutocomplete`. Nothing is removed and Plannotator passes none of it. See "Host toolbar seams (0.43.0)".
 - **core 0.25.5 / ui 0.42.0 (diagram FILES, `.mmd`/`.mermaid`/`.dot`/`.gv`): additive on both packages, so the next publish is core-first.** `@plannotator/core/annotatable` gains `DiagramRenderKind`, `diagramRenderKindForPath`, `isDiagramRenderKind` and `annotateDiagramRenderKind`, and its built-in annotatable sets now include the four diagram extensions (`shouldStripFrontmatter` returns false for them — Mermaid's `--- … ---` config block is content — and they can no longer be registered through `markdownExtensions`). `@plannotator/ui` gains `diagramDocumentBlocks(text, kind)` on `utils/parser` (the ONE `code` block a whole-file diagram source renders as), `shareableDocumentMarkdown(markdown, renderAs)` on `utils/sharing`, the `DocumentRenderAs` type on `types` (`'markdown' | 'html' | DiagramRenderKind`, re-exporting core's kind), and an optional `Block.diagramSourceLineOffset` that `DiagramBlock` prefers over `Block.startLine` when resolving a diagram comment's `sourceLine` (unset on every parser-produced fence, so fences are byte-identical). `useLinkedDoc`'s `renderAs`/`setRenderAs`/`LinkedDocLoadData.renderAs` widen from `'markdown' | 'html'` to `DocumentRenderAs` — source-compatible for a host that only ever passes the old two, but a host whose own state is typed `'markdown' | 'html'` must widen its setter. Since core changes, **publish `core` first** and update UI's exact core dependency before packing ui.

@@ -1015,14 +1015,15 @@ function syncOverlayGutter(
 }
 
 /**
- * The default chip look: the theme's primary at a wash, plus a 2px ring in
- * the SAME wash as a paint-only stand-in for horizontal padding (a real
- * padding would move the glyph). Kept as one constant so the metric rule
- * above it is read with the classes it governs.
+ * The default chip look: the theme's primary at a wash, one shade stronger
+ * than a skill reference's so the two token kinds in one overlay read as
+ * siblings rather than the same thing. Deliberately no ring: every class here
+ * is one the package already emitted, so a host build's CSS (and the portable
+ * guide viewer's) is byte-identical to 0.43.2. A host that wants a pill adds
+ * `box-shadow: 0 0 0 Npx <background>` through `tokenClassName` — paint, not
+ * layout, per the metric rule above.
  */
-const MENTION_CHIP_CLASSES =
-  'text-primary bg-primary/15 rounded-[3px] ' +
-  'shadow-[0_0_0_2px_color-mix(in_oklab,var(--color-primary)_15%,transparent)]';
+const MENTION_CHIP_CLASSES = 'text-primary bg-primary/15 rounded-[3px]';
 
 /**
  * One token's span in the highlight overlay.

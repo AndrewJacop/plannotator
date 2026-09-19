@@ -258,6 +258,18 @@ in 0.42.0 (proven by diffing the mounted `outerHTML` against the base commit).
   no-access dialog) and inserts normally when you do not. Not wired to any
   Plannotator data and not a `configurePlannotatorUI` seam — pass it where you
   render the composer.
+- **`CommentPopover` mention chips** (0.44.0): with a `mentionSource`, the
+  `@Label` tokens the picker inserted render as chips in the composer's text —
+  the same mirrored overlay skill references use, never a second layer. Each
+  chip span carries `data-mention-token="<person id>"` and
+  `data-mention-kind="user|agent"`, and `MentionSource.tokenClassName?` is
+  appended to it for your own look. **Metric rule, yours to keep too:** a chip
+  may change color, background, border-radius, box-shadow and text-decoration
+  ONLY — padding, margin, border width, weight, tracking or size move a glyph
+  and drift the caret off the painted text (want a pill? add
+  `box-shadow: 0 0 0 Npx <background>`, which paints without taking space). Only a person you supplied and the
+  author picked is a chip, and editing a byte of the token un-chips it in the
+  same render that drops the id. No source → no overlay element at all.
 - **`Viewer` / `HtmlViewer` `mentionSource`** (0.43.1): the same prop on the two
   viewers, forwarded to every comment composer each of them mounts, so a host
   wires mentions once per surface instead of per composer. The ids the author
@@ -268,7 +280,9 @@ in 0.42.0 (proven by diffing the mounted `outerHTML` against the base commit).
 
 See HANDOFF.md § "Host toolbar seams (0.43.0)" for the grammar, the keyboard
 rules and the threading points, and § "mentionSource on the viewers (0.43.1)"
-for the two viewer props and the annotation field.
+for the two viewer props and the annotation field. § "Mention token chips in
+the composer (0.44.0)" covers the chips, the metric rule and the merged-range
+refactor behind them.
 
 ### WebMCP provider (`@plannotator/ui/webmcp`; 0.32.0)
 
