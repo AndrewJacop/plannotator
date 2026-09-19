@@ -24,6 +24,7 @@ import {
   type VimHudCommand,
 } from "../../utils/vimHud";
 import { AnnotationToolbar } from "../AnnotationToolbar";
+import type { SelectionAction } from "../../utils/selectionActions";
 import { AttachmentsButton } from "../AttachmentsButton";
 import {
   CommentPopover,
@@ -265,6 +266,10 @@ export interface HtmlViewerProps {
    *  to the bridge so the in-page toggle stops at the same number. Default
    *  16 (the package cap); absent leaves every message unchanged. */
   maxAdditionalTargets?: number;
+  /** Opt-in host capability, passed straight through to the selection
+   *  toolbar: the host's own commands for the current selection, rendered as
+   *  one wand button that opens the package's dropdown. Absent → unchanged. */
+  selectionActions?: SelectionAction[];
   /** scrollIntoView behavior when a selected annotation is scrolled into
    *  view inside the page. Default 'smooth'; pass 'auto' to carry the
    *  parent's reduced-motion preference across the iframe boundary. */
@@ -352,6 +357,7 @@ export const HtmlViewer = forwardRef<ViewerHandle, HtmlViewerProps>(
       readOnly = false,
       onUnanchoredChange,
       maxAdditionalTargets,
+      selectionActions,
       scrollBehavior,
       title = "HTML Plan Viewer",
       bridgeScriptUrl,
@@ -1202,6 +1208,7 @@ export const HtmlViewer = forwardRef<ViewerHandle, HtmlViewerProps>(
               // wrapper filters by id as defense in depth, so no present or
               // future toolbar path can emit an arbitrary label here.
               commentOnly
+              selectionActions={selectionActions}
               onQuickLabel={(label) => {
                 if (label.id === THUMBS_UP_LABEL.id) hook.handleQuickLabel(label);
               }}

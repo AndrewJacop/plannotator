@@ -213,6 +213,8 @@ We deliberately did **not** restructure the exports map in this PR (move-don't-r
 | `components/HtmlSurfaceControls` | The eye / refresh / pen header controls for an HTML surface, with per-string `labels` overrides. Presentation only. See "HTML annotation parity seams". |
 | `hooks/useHtmlRefresh` | Re-fetch a rendered HTML document through a host-supplied `fetchSnapshot`, remount the viewer on a reload generation, acknowledge the restore report once. See "HTML annotation parity seams". |
 | `shortcuts` (`useHtmlAnnotateShortcuts`, `defineShortcutScope`, the scope registry) | The declarative keyboard-shortcut engine and the per-surface scopes, including the HTML annotate scope (Mod+Shift+A toggles annotate mode, Mod+Shift+X shows/hides the tools). Pure: React plus `utils/platform`; no backend. |
+| `utils/selectionActions` + `components/SelectionActionsDropdown` | The host selection-actions seam: `SelectionAction`, `SelectionActionContext`, the pure `buildSelectionActionContext`, and the dropdown `AnnotationToolbar` opens. Pure React; no backend. *(Blessed in 0.43.0.)* |
+| `utils/mentions` + `components/MentionPicker` + `hooks/useMentionAutocomplete` | The `@` mention seam behind `CommentPopover`'s `mentionSource`: the pure grammar (`mentionTrigger`, `mentionMatches`, `applyMentionPick`, `survivingMentions`), the portaled picker, and the keyboard state machine. Pure React; no backend. *(Blessed in 0.43.0.)* |
 | `utils/inputMethod` (`getInputMethod`, `saveInputMethod`, `refreshInputMethodStamp`) | The per-surface pinpoint/drag input-method preference with its TTL. Persists through the `storageBackend` seam; no backend of its own. |
 | `utils/codeHighlight` / `utils/codeBlockMark` / `utils/syntaxTheme` | The Shiki-based fence highlighter, swap-surviving annotation marks, and palette→Shiki theme mapping. Replaces all `.hljs` styling. *(Blessed in 0.29.0.)* |
 | `utils/math` (`loadMathRenderer`, `getMathRenderer`, `getMathRendererSource`, `setMathRenderer`, `setMathRendererLoader`, `getMathRendererLoader`, `resetMathRenderer`) and `utils/math-eager` | The math renderer slot and its eager KaTeX registration. Import `utils/math-eager` for synchronous typesetting on the first commit; call `loadMathRenderer()` to pre-warm the lazy path. `resetMathRenderer()` empties the slot and keeps the registered loader; `setMathRendererLoader(null)` drops it. See "Lazy renderers and eager entries". |
@@ -873,8 +875,192 @@ to fall back on:
 
 ---
 
+## Host toolbar seams (0.43.0)
+
+Two additive props, ruled in together by Plannotator's owner **on one
+condition: each is an opt-in host capability that changes nothing for
+Plannotator's own users when it is not supplied.** Plannotator is the provider
+of these capabilities; it is not a product that uses them. It passes neither
+prop anywhere, and `packages/editor` / `packages/review-editor` are untouched
+by this release. Core is UNCHANGED at `0.25.5`, so **ui 0.43.0 publishes
+alone**.
+
+### 1. `AnnotationToolbar` `selectionActions` — the host's own commands on a selection
+
+```ts
+import type { SelectionAction, SelectionActionContext } from "@plannotator/ui/types";
+// (also @plannotator/ui/utils/selectionActions)
+
+interface SelectionActionContext {
+  text: string;          // the toolbar's copy text, else the element's text
+  blockId: string;       // the enclosing [data-block-id], '' on raw-HTML surfaces
+  startOffset: number;   // offset of the selection inside that block's text
+  endOffset: number;     // startOffset + text.length
+  element: HTMLElement;  // the element the toolbar is anchored to
+}
+
+interface SelectionAction {
+  id: string;
+  label: string;
+  detail?: string;         // dimmed second line
+  icon?: React.ReactNode;  // a colored accent bar is drawn when absent
+  onSelect(ctx: SelectionActionContext): void;
+}
+```
+
+One toolbar button (a wand, `data-selection-actions`) opens the package's own
+dropdown directly below it, in the quick-label picker's placement and chrome
+(`components/SelectionActionsDropdown`: `SelectionActionsDropdown` is the list,
+`FloatingSelectionActionsPicker` the portaled, viewport-clamped, flip-above
+picker; rows carry `data-selection-action="<id>"` under `role="listbox"`).
+Selecting an item calls `onSelect(ctx)` and closes the toolbar exactly as a
+quick label does — **the package creates no annotation**; what an action means
+is entirely the host's business.
+
+- **Keyboard:** ArrowDown / ArrowUp move, Enter invokes, Escape closes the
+  dropdown (and only the dropdown — the toolbar stays open). Nothing is
+  preselected until the first arrow, the package-wide rule, so a stray Enter
+  over an open dropdown never fires a host command. Pointer hover highlights a
+  row and a click invokes it directly. While the dropdown is open, the
+  toolbar's own type-to-comment and Alt+digit listeners stand down, the same
+  way they do for `FloatingQuickLabelPicker`.
+- **Where it sits:** the wand takes the slot the quick-labels Zap occupied and
+  the Zap moves one place right (`Copy | Delete | Comment | Actions | Quick
+  label | 👍 | Cancel`). Chosen over "actions to the right of the Zap" so that
+  ONE geometry rule covers both host configurations: with `quickLabels: false`
+  — the expected host setup — the wand sits exactly where the Zap sat, and a
+  host that keeps both gets its own actions in the primary slot it opted into.
+- `undefined` or `[]` renders no button at all, and the empty array is pinned
+  by a test because "the host has no actions right now" is a real state.
+- **The context is derived, not threaded.** `buildSelectionActionContext`
+  (`utils/selectionActions`, pure) walks up from the anchor element for
+  `[data-block-id]` and computes the offset by splitting the block's text on
+  the selection — deliberately the same arithmetic
+  `createAnnotationFromSource` uses, so an action sees the coordinates an
+  annotation created from that same selection would carry. On a surface with
+  no blocks (raw HTML) it degrades to `blockId: ''` and `startOffset: 0`
+  (`endOffset` is then the selection's length; an HTML annotation itself
+  stores `0`/`0`). The one deliberate deviation from the annotation path is
+  a selection the block does not contain — one spanning two blocks — where
+  the annotation path reports `blockText.length` and a host gets `0`.
+
+### 2. `AnnotationToolbar` `quickLabels` — the opt-out switch
+
+`quickLabels?: boolean`, default `true`. `false` hides the Zap picker button
+**and** makes the Alt+digit label shortcuts inert on that toolbar (hiding the
+button while leaving the keys live was the obvious bug; a test pins both). It
+does not touch the one-click 👍, which is a separate affordance, and it does
+not clamp editor mode — a host that persists `'quickLabel'` mode still keeps
+that state out of `Viewer`, exactly as with `AnnotationToolstrip`'s
+`hideQuickLabel` (0.35.0).
+
+### 3. `CommentPopover` `mentionSource` — an `@` mention source for the composer
+
+```ts
+import type { MentionPerson, MentionSource } from "@plannotator/ui/types";
+// (also @plannotator/ui/utils/mentions)
+
+interface MentionPerson {
+  readonly id: string;                    // opaque host id, reported back verbatim
+  readonly kind: "user" | "agent";        // agents are never taggable in a comment
+  readonly label: string;
+  readonly detail: string | null;         // right-aligned hint (an email, "Agent")
+  readonly canOpen: boolean;              // host access data; see onPickBlocked
+}
+
+interface MentionSource {
+  readonly people: readonly MentionPerson[];
+  readonly emptyNotice?: string | null;                     // honest-empty row
+  readonly onMentionsChange?: (ids: readonly string[]) => void;
+  readonly onPickBlocked?: (person: MentionPerson) => void;
+}
+```
+
+This is the shape the host's own reply box already uses (`MentionPerson` is
+copied field for field from its `plannotator/mention-extension.ts`), so the
+host fills `people` from its existing candidate hook and nothing has to be
+mapped. The **package owns the typing rules and the picker**; the host owns
+the people and what a mention means.
+
+- **The grammar is ported, not reinvented** (`utils/mentions`, pure, unit
+  tested): the same `MENTION_QUERY_RE = /@[\w .-]*$/`, the same word-boundary
+  guard that makes `a@b.com` never open a menu, the same users-only /
+  not-already-tagged filtering on label OR detail, the same `@Label ` insertion
+  with the caret after it, the same `sanitizeMentionLabel`, and the same
+  surviving-token rule — deleting a token untags that person, so the body and
+  the reported ids can never disagree about who was named.
+- **The picker** (`components/MentionPicker`) is portaled and `position:
+  fixed`, measured from the textarea's rect, above it by default and below
+  when there is not 196px of headroom — the composer card clips its own box,
+  so a menu positioned inside the textarea's wrapper is cut off. `role=
+  "listbox"` with `data-mention-picker`, rows `data-mention-option="<id>"`, the
+  empty notice `data-mention-empty` (one non-selectable row; with `people: []`
+  and no notice the menu simply stays closed).
+- **Keyboard** (`hooks/useMentionAutocomplete`, modelled on
+  `useSkillReferenceAutocomplete` and living in the same textarea beside it —
+  `handleKeyDown` offers the event to the skill hook first, then this one):
+  nothing is preselected, so Enter is a newline and Tab leaves the field until
+  an arrow engages a row; ArrowDown from none lands on the first row, ArrowUp
+  on the last; a mouse pick uses `mousedown` + `preventDefault` so it beats the
+  blur. **One deliberate difference from the `/` and `$` trigger:** the arrows
+  engage this menu even on a bare `@`, and Escape closes it whenever it is
+  visible. `$` and `/` are ordinary prose characters whose menu must yield the
+  arrows back to caret navigation; `@` at a word boundary is an unambiguous tag
+  gesture, and typing `@` then ArrowDown is how the host's own reply box
+  behaves.
+- **`onPickBlocked` is the no-access rule.** When a `canOpen: false` person is
+  picked AND the host supplied `onPickBlocked`, the handler fires and
+  **nothing is inserted** (the host shows its own no-access dialog). Without
+  the handler such a person inserts like anyone else — the package never
+  renders a disabled row it cannot explain. Both branches are pinned by tests.
+- **The ids reach the host two ways.** `onMentionsChange(ids)` fires on every
+  text change with the surviving ids, and `onSubmit` gained an optional THIRD
+  argument: `onSubmit(text, images?, mentions?)`. The third argument is passed
+  **only when `mentionSource` is supplied** — without one the call is the
+  two-argument call it has always been (`arguments.length === 2`, pinned).
+  Hosts can use either; `onMentionsChange` alone is enough for a host that
+  keeps its draft state outside the popover.
+- Nothing is wired to Plannotator data: there is no mention provider in this
+  repo, and `configurePlannotatorUI` gains no seam for one. A host passes the
+  prop where it renders the composer, the `HtmlViewer` / `Viewer` pattern.
+
+### Threading points
+
+- `AnnotationToolbar` (`selectionActions`, `quickLabels`) — the props live here.
+- `Viewer` forwards both to BOTH of its toolbars (the text-selection toolbar
+  and the code-block hover toolbar).
+- `HtmlViewer` forwards `selectionActions` to its selection toolbar. It does
+  not take `quickLabels`: that surface is already `commentOnly`, which hides
+  the Zap and the Alt+digit keys outright.
+- `plan-diff/PlanCleanDiffView` mounts a toolbar too and is deliberately NOT
+  threaded: it is a Plannotator-only surface (the plan-version diff) and is not
+  on the supported-import list. Ask if a host needs it.
+- `CommentPopover` (`mentionSource`). `Viewer` does NOT forward it: the viewer
+  owns several composers and a per-composer decision belongs to the host that
+  renders them. Ask if you would rather pass it once on `Viewer`.
+
+### The no-op guarantee, and how it is pinned
+
+With neither prop supplied, the rendered DOM of both components is **byte-for-byte
+what `origin/main` renders**: the same components were mounted on the base commit
+and on this branch in the same harness and their `outerHTML` diffed to zero
+(`.annotation-toolbar` + `[data-comment-popover]`, 6376 bytes each, identical).
+On top of that, committed tests pin the structure rather than a snapshot:
+the default toolbar's button set and order (`Copy, Delete, Comment, Quick
+label, Looks good, Cancel`), the absence of `[data-selection-actions]` and of
+the picker, the exact attribute list on the Zap button, and — for the composer —
+that typing `@` opens nothing and that submit stays a two-argument call.
+`useMentionAutocomplete` with no source registers no listener, opens no menu
+state and returns one frozen empty id array; `AnnotationToolbar` renders no
+extra element and spreads no extra attributes.
+
+Tests: `utils/mentions.test.ts` (11, DOM-free),
+`components/AnnotationToolbar.selectionActions.test.tsx` (8, DOM-gated),
+`components/CommentPopover.mentionSource.test.tsx` (11, DOM-gated).
+
 ## Publishing & versioning
 
+- **ui 0.43.0 (host toolbar seams): `@plannotator/ui` only — `@plannotator/core` is UNCHANGED at `0.25.5`, so this publishes alone** (core 0.25.5 must already be published). Purely additive: `selectionActions` + `quickLabels` on `AnnotationToolbar` (forwarded by `Viewer`; `selectionActions` also by `HtmlViewer`), `mentionSource` on `CommentPopover`, an optional third `mentions` argument on that component's `onSubmit`, and the new supported modules `utils/selectionActions`, `utils/mentions`, `components/SelectionActionsDropdown`, `components/MentionPicker`, `hooks/useMentionAutocomplete`. Nothing is removed and Plannotator passes none of it. See "Host toolbar seams (0.43.0)".
 - **core 0.25.5 / ui 0.42.0 (diagram FILES, `.mmd`/`.mermaid`/`.dot`/`.gv`): additive on both packages, so the next publish is core-first.** `@plannotator/core/annotatable` gains `DiagramRenderKind`, `diagramRenderKindForPath`, `isDiagramRenderKind` and `annotateDiagramRenderKind`, and its built-in annotatable sets now include the four diagram extensions (`shouldStripFrontmatter` returns false for them — Mermaid's `--- … ---` config block is content — and they can no longer be registered through `markdownExtensions`). `@plannotator/ui` gains `diagramDocumentBlocks(text, kind)` on `utils/parser` (the ONE `code` block a whole-file diagram source renders as), `shareableDocumentMarkdown(markdown, renderAs)` on `utils/sharing`, the `DocumentRenderAs` type on `types` (`'markdown' | 'html' | DiagramRenderKind`, re-exporting core's kind), and an optional `Block.diagramSourceLineOffset` that `DiagramBlock` prefers over `Block.startLine` when resolving a diagram comment's `sourceLine` (unset on every parser-produced fence, so fences are byte-identical). `useLinkedDoc`'s `renderAs`/`setRenderAs`/`LinkedDocLoadData.renderAs` widen from `'markdown' | 'html'` to `DocumentRenderAs` — source-compatible for a host that only ever passes the old two, but a host whose own state is typed `'markdown' | 'html'` must widen its setter. Since core changes, **publish `core` first** and update UI's exact core dependency before packing ui.
 - **The current pair is `@plannotator/ui` `0.41.2` on `@plannotator/core` `0.25.4`.** Core is UNCHANGED from 0.41.1, so 0.41.2 publishes alone (`ui` only; core 0.25.4 must already be published). 0.41.2 ships the palette-derived Mermaid node shadow at a default of 70% (`DEFAULT_MERMAID_SHADOW_AMOUNT`) and the Settings → Display "Diagram Shadow" control (0 / 40 / 70 / 100); see "Node shadow (the one thing that is not a colour)" under "Theme-aware Mermaid diagrams (0.40.0)" for the mapping — no API removal, only additive exports (`buildMermaidShadow`, `DEFAULT_MERMAID_SHADOW_AMOUNT`, `utils/diagramShadow`).
 - The pair 0.41.1 shipped as was `@plannotator/ui` `0.41.1` on `@plannotator/core` `0.25.4`. Core is UNCHANGED from 0.41.0, so 0.41.1 published alone (`ui` only; core 0.25.4 must already be published). 0.41.1 is two fixes over 0.41.0 with no API change — the diagram engine is loaded lazily by the first diagram fence instead of riding every document read, and a press on the canvas's own controls no longer comments on the part behind them; see "0.41.1 — the engine is lazy, and the controls are not part of the diagram". The 0.41.0 notes below still describe the engine itself.

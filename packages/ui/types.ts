@@ -450,3 +450,15 @@ export type {
   AgentCapability,
   AgentCapabilities,
 } from '@plannotator/core/agent-jobs';
+
+/** Host toolbar seams (opt-in; Plannotator supplies neither). */
+export type {
+  SelectionAction,
+  SelectionActionContext,
+} from './utils/selectionActions';
+
+export type {
+  MentionPerson,
+  MentionSource,
+  MentionTrigger,
+} from './utils/mentions';
