@@ -38,7 +38,7 @@ const skill = (start: number, end: number, name: string): SkillReferenceToken =>
   entry: entry(name),
 });
 
-/** What the overlay actually paints, as `[start, end, text]` triples. */
+/** The substrings the overlay actually paints, in document order. */
 function painted(text: string, ranges: readonly ComposerTokenRange[]): string[] {
   return ranges.map((r) => text.slice(r.start, r.end));
 }

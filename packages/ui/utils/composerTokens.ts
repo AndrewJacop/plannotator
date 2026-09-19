@@ -56,8 +56,10 @@ export function skillTokenRanges(
  * Driven by the mention ID MODEL, never by a regex over arbitrary `@words`:
  * the people passed in are the ones the author actually picked and whose
  * token still survives (`survivingMentions`), so editing a byte of a token
- * un-chips it in the same breath as it untags the person. The body and the
- * chips can therefore never disagree about who was named.
+ * un-chips it in the same breath as it untags the person: a chip follows the
+ * body, never a stale pick. (The reported IDS can lag in one inherited case —
+ * a label that is a prefix of another label — see HANDOFF § "Mention token
+ * chips in the composer".)
  *
  * KNOWN, INHERITED LIMITATION: two people whose labels sanitize to the same
  * token are indistinguishable in a plain-text body, so the FIRST of them

@@ -1216,18 +1216,25 @@ and so the metric rule below is read with the classes it governs.
 
 A chip is painted only for a person the author PICKED whose token still
 survives — `useMentionAutocomplete` now also returns those survivors as
-`mentions` (the same frozen empty array as `mentionIds` with no source), so
-the ranges come from the mention id model and never from a regex over
-arbitrary `@words`. Editing one byte of a token un-chips it in the same
-render that drops the id from `onMentionsChange`, so the chips, the body and
-the reported ids can never disagree about who was named.
+`mentions` (frozen-empty with no source, the same treatment `mentionIds`
+gets), so the ranges come from the mention id model and never from a regex
+over arbitrary `@words`. Editing one byte of a token un-chips it in the same
+render that drops the id from `onMentionsChange`, so a chip follows the body
+rather than a stale pick. The one case where the chips and the reported IDS
+can still part company is the prefix case in the limitations below, which
+the chips inherit rather than introduce.
 
 ```
 <span data-mention-token="user_1" data-mention-kind="user" class="…">@Marcus Chen</span>
 ```
 
-- `data-mention-token` is the opaque host id, `data-mention-kind` is
-  `user | agent` — the host's styling hook.
+- `data-mention-token` is the opaque host id; `data-mention-kind` carries
+  `MentionPerson.kind` verbatim — the host's styling hook. Know what that
+  means today: the picker offers USERS ONLY (`mentionMatches` drops every
+  person whose `kind !== 'user'`), so only a user can be picked, only a user
+  can be tagged, and the attribute only ever reads `user`. `agent` is the
+  reserved value for the day agents become taggable — a host rule for
+  `[data-mention-kind="agent"]` matches nothing until then.
 - `MentionSource.tokenClassName?: string` (new, optional) is appended to the
   span verbatim for a host that wants its own look.
 - The package default is `text-primary bg-primary/15` and a 3px radius —
@@ -1258,7 +1265,7 @@ all untouched, and `onSubmit(text, images?, mentions?)` is the same call.
 `Viewer` and `HtmlViewer` needed no change at all: they already forward
 `mentionSource` (0.43.1), and the chips are inside the composer it reaches.
 
-Two inherited limitations are worth stating rather than fixing here:
+Three inherited limitations are worth stating rather than fixing here:
 
 - **Two people whose labels sanitize to the same token** are
   indistinguishable in a plain-text body, so the FIRST of them listed owns
@@ -1268,7 +1275,16 @@ Two inherited limitations are worth stating rather than fixing here:
 - **A restored draft has no chips** until the author picks again, because
   the survivors come from the picks made in THIS composer — exactly the same
   reason `onMentionsChange` reports `[]` for a restored draft today (0.43.x
-  behavior, unchanged).
+  behavior, unchanged). It reports no STALE ids either: a reopened draft
+  starts with nobody tagged, so the chips and the ids agree on "none".
+- **A label that is a prefix of another label** (`Ann` and `Anna Lee`, both
+  picked): the CHIPS are right — longest-wins means `@Anna Lee` is painted
+  whole and is never half-covered by an `@Ann` chip. The IDS are the loose
+  end: delete `@Ann` from a body that still reads `@Anna Lee` and
+  `survivingMentions` keeps reporting Ann, because it asks
+  `text.includes('@Ann')`. So the id list can outlive the chip. That is
+  0.43.x behavior in `survivingMentions`, unchanged here — the chips only
+  make it visible.
 
 ### The no-op guarantee, and how it is pinned
 

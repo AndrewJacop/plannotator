@@ -36,8 +36,8 @@ export interface UseMentionAutocompleteResult {
   mentionIds: readonly string[];
   /**
    * The same survivors as people, for a caller that needs their labels — the
-   * composer paints each surviving token as a chip. Same frozen empty array
-   * as `mentionIds` when there is no source.
+   * composer paints each surviving token as a chip. Frozen-empty with no
+   * source, the same treatment `mentionIds` gets.
    */
   mentions: readonly MentionPerson[];
 }
