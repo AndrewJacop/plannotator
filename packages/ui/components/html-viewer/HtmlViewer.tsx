@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import { useVimDocumentFocus } from "../../hooks/useVimDocumentFocus";
@@ -271,6 +272,9 @@ export interface HtmlViewerProps {
    *  toolbar: the host's own commands for the current selection, rendered as
    *  one wand button that opens the package's dropdown. Absent → unchanged. */
   selectionActions?: SelectionAction[];
+  /** Opt-in host capability: the glyph on the `selectionActions` button.
+   *  Absent → the package's own wand. */
+  selectionActionsIcon?: ReactNode;
   /** Opt-in host capability, forwarded to BOTH comment composers this viewer
    *  mounts (the pinpoint/selection composer and the global one): the `@`
    *  mention source for the composer's picker. The picked ids ride onto the
@@ -364,6 +368,7 @@ export const HtmlViewer = forwardRef<ViewerHandle, HtmlViewerProps>(
       onUnanchoredChange,
       maxAdditionalTargets,
       selectionActions,
+      selectionActionsIcon,
       mentionSource,
       scrollBehavior,
       title = "HTML Plan Viewer",
@@ -1217,6 +1222,7 @@ export const HtmlViewer = forwardRef<ViewerHandle, HtmlViewerProps>(
               // future toolbar path can emit an arbitrary label here.
               commentOnly
               selectionActions={selectionActions}
+              selectionActionsIcon={selectionActionsIcon}
               onQuickLabel={(label) => {
                 if (label.id === THUMBS_UP_LABEL.id) hook.handleQuickLabel(label);
               }}

@@ -45,6 +45,12 @@ interface AnnotationToolbarProps {
    */
   selectionActions?: SelectionAction[];
   /**
+   * Opt-in host capability: the glyph on the `selectionActions` button, so a
+   * host can match the wand it draws elsewhere. Absent → the package's own
+   * wand. Nothing else about the button changes (name, data attribute, size).
+   */
+  selectionActionsIcon?: React.ReactNode;
+  /**
    * Whether the package's own quick labels are offered (default true).
    * `false` hides the Zap picker button and the Alt+digit label shortcuts on
    * this toolbar. The one-click 👍 is a separate affordance and is unaffected.
@@ -69,6 +75,7 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
   onRequestComment,
   onQuickLabel,
   selectionActions,
+  selectionActionsIcon,
   quickLabels: quickLabelsEnabled = true,
   copyText,
   commentOnly = false,
@@ -273,7 +280,7 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
           <ToolbarButton
             ref={actionsButtonRef}
             onClick={() => setShowSelectionActions(prev => !prev)}
-            icon={<WandIcon />}
+            icon={selectionActionsIcon ?? <WandIcon />}
             label="Actions"
             className={selectionActionsOpen ? "text-primary bg-primary/10" : "text-primary hover:bg-primary/10"}
             dataAttributes={{ 'data-selection-actions': 'true' }}
@@ -370,9 +377,11 @@ const ZapIcon = () => (
   </svg>
 );
 
+// One thick diagonal wand with a single four-point star at its tip: the
+// earlier glyph carried six sparks and read as noise at 16px.
 const WandIcon = () => (
-  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M15 4V2m0 16v-2M8 9h2m10 0h2M17.8 11.8L19 13M15 9h0M17.8 6.2L19 5M3 21l9-9M12.2 6.2L11 5" />
+  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M3 21L13.5 10.5M17 3v7M13.5 6.5h7" />
   </svg>
 );
 

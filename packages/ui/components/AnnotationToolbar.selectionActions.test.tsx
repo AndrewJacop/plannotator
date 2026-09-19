@@ -37,6 +37,7 @@ afterEach(async () => {
 
 interface MountOptions {
   selectionActions?: SelectionAction[];
+  selectionActionsIcon?: React.ReactNode;
   quickLabels?: boolean;
   withQuickLabelHandler?: boolean;
   onQuickLabel?: (label: QuickLabel) => void;
@@ -69,6 +70,7 @@ async function mount(options: MountOptions = {}) {
         }
         copyText={options.copyText ?? 'SELECTED'}
         selectionActions={options.selectionActions}
+        selectionActionsIcon={options.selectionActionsIcon}
         quickLabels={options.quickLabels}
       />,
     );
@@ -132,6 +134,27 @@ describe.if(hasDom)('AnnotationToolbar host seams', () => {
     const titles = buttonTitles();
     expect(titles).toEqual(['Copy', 'Delete', 'Comment', 'Actions', 'Looks good', 'Cancel']);
     expect(wand()).not.toBeNull();
+  });
+
+  test('selectionActionsIcon replaces the glyph inside the wand button and nothing else', async () => {
+    // Sentinel node: the only thing asserted is that the host's node is what
+    // the button contains, and that the package's own svg is gone.
+    await mount({
+      selectionActions: [{ id: 'a', label: 'A', onSelect: () => {} }],
+      selectionActionsIcon: <span data-host-icon="true">W</span>,
+    });
+    const button = wand();
+    expect(button).not.toBeNull();
+    expect(button!.querySelector('[data-host-icon]')).not.toBeNull();
+    expect(button!.querySelector('svg')).toBeNull();
+    expect(button!.title).toBe('Actions');
+    expect(button!.getAttribute('data-selection-actions')).toBe('true');
+  });
+
+  test('without selectionActionsIcon the wand button carries the package svg', async () => {
+    await mount({ selectionActions: [{ id: 'a', label: 'A', onSelect: () => {} }] });
+    expect(wand()!.querySelector('svg')).not.toBeNull();
+    expect(wand()!.querySelector('[data-host-icon]')).toBeNull();
   });
 
   test('with both, the wand sits immediately left of the Zap', async () => {
