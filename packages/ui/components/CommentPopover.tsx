@@ -10,13 +10,14 @@ import { useSkillReferenceAutocomplete } from '../hooks/useSkillReferenceAutocom
 import { HumanOnlySkillNotice, SkillReferenceMenu } from './SkillReferenceMenu';
 import type { SkillReferenceToken } from '../utils/skillReferences';
 import {
+  mentionTokenRanges,
   mergeTokenRanges,
   skillTokenRanges,
   type ComposerTokenRange,
 } from '../utils/composerTokens';
 import { useMentionAutocomplete } from '../hooks/useMentionAutocomplete';
 import { MentionPicker } from './MentionPicker';
-import type { MentionSource } from '../utils/mentions';
+import type { MentionPerson, MentionSource } from '../utils/mentions';
 import {
   hasPrimaryCoarsePointer,
   shouldUseExpandedComposer,
@@ -479,6 +480,19 @@ export const CommentPopover: React.FC<CommentPopoverProps> = ({
     source: mentionSource,
   });
 
+  // The mention half of the composer's highlight layer: present for the whole
+  // life of a mention composer (so the first pick never swaps the textarea
+  // element), null without a source (so the overlay does not exist at all).
+  const mentionChipPeople = mentionAc.mentions;
+  const mentionTokenClassName = mentionSource?.tokenClassName;
+  const mentionChips: ComposerMentionChips | null = useMemo(
+    () =>
+      mentionSource
+        ? { people: mentionChipPeople, tokenClassName: mentionTokenClassName }
+        : null,
+    [mentionSource, mentionChipPeople, mentionTokenClassName],
+  );
+
   const handleSubmit = useCallback(() => {
     const canSubmitEmpty = allowEmptySubmit && initialText.trim().length > 0;
     if (hasUnsavedContent || canSubmitEmpty) {
@@ -689,6 +703,7 @@ export const CommentPopover: React.FC<CommentPopoverProps> = ({
               sizeClassName="min-h-32 max-h-full"
               skillReferences={skillReferences}
               tokens={skillAc.referenceTokens}
+              mentionChips={mentionChips}
               listboxId={composerListboxId}
               listboxOpen={composerListboxOpen}
               activeOptionId={activeComposerOptionId}
@@ -854,6 +869,7 @@ export const CommentPopover: React.FC<CommentPopoverProps> = ({
           sizeClassName="max-h-64 min-h-[4.5rem]"
           skillReferences={skillReferences}
           tokens={skillAc.referenceTokens}
+          mentionChips={mentionChips}
           listboxId={composerListboxId}
           listboxOpen={composerListboxOpen}
           activeOptionId={activeComposerOptionId}
@@ -999,6 +1015,16 @@ function syncOverlayGutter(
 }
 
 /**
+ * The default chip look: the theme's primary at a wash, plus a 2px ring in
+ * the SAME wash as a paint-only stand-in for horizontal padding (a real
+ * padding would move the glyph). Kept as one constant so the metric rule
+ * above it is read with the classes it governs.
+ */
+const MENTION_CHIP_CLASSES =
+  'text-primary bg-primary/15 rounded-[3px] ' +
+  'shadow-[0_0_0_2px_color-mix(in_oklab,var(--color-primary)_15%,transparent)]';
+
+/**
  * One token's span in the highlight overlay.
  *
  * METRIC RULE, load-bearing for every token kind: a span may change COLOR,
@@ -1023,7 +1049,7 @@ function renderTokenSpan(
         key={`mention-${range.start}`}
         data-mention-token={range.person.id}
         data-mention-kind={range.person.kind}
-        className={`text-primary bg-primary/15 rounded-[3px] shadow-[0_0_0_2px] shadow-primary/15${
+        className={`${MENTION_CHIP_CLASSES}${
           mentionTokenClassName ? ` ${mentionTokenClassName}` : ''
         }`}
       >
@@ -1051,6 +1077,14 @@ function renderTokenSpan(
   );
 }
 
+/** The mention half of the highlight layer. Null → no mention source at all. */
+export interface ComposerMentionChips {
+  /** The people whose `@Label` token still survives in the text. */
+  readonly people: readonly MentionPerson[];
+  /** Host class appended to each chip (see `MentionSource.tokenClassName`). */
+  readonly tokenClassName?: string;
+}
+
 interface ComposerTextareaProps {
   value: string;
   onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
@@ -1063,8 +1097,14 @@ interface ComposerTextareaProps {
   textareaRef: (el: HTMLTextAreaElement | null) => void;
   /** Positioned skill-reference occurrences to highlight. */
   tokens: SkillReferenceToken[];
-  /** Off → render the plain pre-feature textarea, byte-for-byte. */
+  /** Off → no skill-reference contribution to the highlight layer. */
   skillReferences: boolean;
+  /**
+   * The mention contribution, or null with no `mentionSource`. Present (even
+   * with nobody tagged yet) it turns the overlay on, so the first pick paints
+   * a chip without swapping the textarea for a different element.
+   */
+  mentionChips: ComposerMentionChips | null;
   /** ARIA relationship to the skill-reference listbox. */
   listboxId: string;
   listboxOpen: boolean;
@@ -1072,13 +1112,15 @@ interface ComposerTextareaProps {
 }
 
 /**
- * The composer's textarea. With `skillReferences` off this is exactly the
- * pre-feature `<textarea>`; with it on, inserted skill-reference tokens are
- * highlighted via a mirrored, aria-hidden overlay rendered BEHIND a
- * transparent-text textarea (a textarea cannot style substrings). The overlay
- * shares the exact font/padding/wrapping metrics and mirrors scroll position,
- * and token spans change ONLY color/background (never font or weight), so the
- * glyphs the browser lays out in the textarea and the glyphs the overlay
+ * The composer's textarea. With NEITHER token source active this is exactly
+ * the pre-feature `<textarea>`; with either one on, its tokens are painted by
+ * a mirrored, aria-hidden overlay rendered BEHIND a transparent-text textarea
+ * (a textarea cannot style substrings). ONE overlay serves both sources: two
+ * mirrored layers could never stay pixel-aligned with each other, and only
+ * one of them could own the scroll sync. The overlay shares the exact
+ * font/padding/wrapping metrics and mirrors scroll position, and token spans
+ * obey the metric rule on `renderTokenSpan` (paint only, never layout), so
+ * the glyphs the browser lays out in the textarea and the glyphs the overlay
  * paints coincide. During IME composition the overlay hides and the textarea
  * text becomes visible again (`.pn-ref-composing`), keeping native
  * composition rendering (underlines, candidate highlights) intact.
@@ -1093,6 +1135,7 @@ const ComposerTextarea: React.FC<ComposerTextareaProps> = ({
   textareaRef,
   tokens,
   skillReferences,
+  mentionChips,
   listboxId,
   listboxOpen,
   activeOptionId,
@@ -1121,10 +1164,21 @@ const ComposerTextarea: React.FC<ComposerTextareaProps> = ({
     [textareaRef],
   );
 
+  // The overlay exists while EITHER source is active. `mentionChips` turns it
+  // on for the whole life of a mention composer, not only once somebody is
+  // tagged, so a pick never swaps the textarea element under the caret.
+  const mentionPeople = mentionChips?.people;
+  const highlight = skillReferences || mentionChips !== null;
+
   // The one list of spans the overlay paints, from every active source.
+  // Skill references are the earlier group, so they win a byte both claim.
   const ranges = useMemo(
-    () => mergeTokenRanges(value, [skillTokenRanges(tokens)]),
-    [value, tokens],
+    () =>
+      mergeTokenRanges(value, [
+        skillReferences ? skillTokenRanges(tokens) : [],
+        mentionPeople ? mentionTokenRanges(value, mentionPeople) : [],
+      ]),
+    [value, tokens, skillReferences, mentionPeople],
   );
 
   // Keep the mirror aligned when the value changes without a scroll event
@@ -1144,9 +1198,9 @@ const ComposerTextarea: React.FC<ComposerTextareaProps> = ({
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [skillReferences, syncScroll]);
+  }, [highlight, syncScroll]);
 
-  if (!skillReferences) {
+  if (!highlight) {
     return (
       <textarea
         data-pn-mobile-editable="true"
@@ -1171,7 +1225,9 @@ const ComposerTextarea: React.FC<ComposerTextareaProps> = ({
   let pos = 0;
   for (const range of ranges) {
     if (range.start > pos) segments.push(value.slice(pos, range.start));
-    segments.push(renderTokenSpan(range, value.slice(range.start, range.end)));
+    segments.push(
+      renderTokenSpan(range, value.slice(range.start, range.end), mentionChips?.tokenClassName),
+    );
     pos = range.end;
   }
   segments.push(value.slice(pos));
@@ -1181,7 +1237,10 @@ const ComposerTextarea: React.FC<ComposerTextareaProps> = ({
       <div
         ref={overlayRef}
         aria-hidden="true"
-        data-skill-ref-overlay="true"
+        // Names the SKILL-reference layer, so a skill composer's overlay is
+        // byte-identical to the one it rendered before mentions existed; a
+        // mentions-only overlay is found by its mirror attribute below.
+        data-skill-ref-overlay={skillReferences ? 'true' : undefined}
         data-pn-mobile-editable-mirror="true"
         className={`${COMPOSER_TEXT_CLASSES} ${sizeClassName} pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words`}
         style={composing ? { visibility: 'hidden' } : undefined}
