@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useId } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, useId } from 'react';
 import { createPortal } from 'react-dom';
 import type { ImageAttachment } from '../types';
 import { AttachmentsButton } from './AttachmentsButton';
@@ -9,6 +9,11 @@ import { hasUnsavedCommentContent } from '../utils/commentContent';
 import { useSkillReferenceAutocomplete } from '../hooks/useSkillReferenceAutocomplete';
 import { HumanOnlySkillNotice, SkillReferenceMenu } from './SkillReferenceMenu';
 import type { SkillReferenceToken } from '../utils/skillReferences';
+import {
+  mergeTokenRanges,
+  skillTokenRanges,
+  type ComposerTokenRange,
+} from '../utils/composerTokens';
 import { useMentionAutocomplete } from '../hooks/useMentionAutocomplete';
 import { MentionPicker } from './MentionPicker';
 import type { MentionSource } from '../utils/mentions';
@@ -993,6 +998,59 @@ function syncOverlayGutter(
   state.applied = scrollbar;
 }
 
+/**
+ * One token's span in the highlight overlay.
+ *
+ * METRIC RULE, load-bearing for every token kind: a span may change COLOR,
+ * BACKGROUND, BORDER-RADIUS, BOX-SHADOW and TEXT-DECORATION only. Anything
+ * that moves a glyph — padding, margin, border width, font-weight,
+ * letter-spacing, font-size — would shift the overlay's text off the
+ * textarea's own layout and drift the caret away from the painted glyphs. A
+ * pill's breathing room is faked with a paint-only `box-shadow` ring in the
+ * chip's own background color.
+ */
+function renderTokenSpan(
+  range: ComposerTokenRange,
+  text: string,
+  mentionTokenClassName?: string,
+): React.ReactNode {
+  if (range.kind === 'mention') {
+    // `data-mention-token` / `data-mention-kind` are the host's styling hook;
+    // `tokenClassName` is appended verbatim and is the host's to keep
+    // metric-safe (see the rule above).
+    return (
+      <span
+        key={`mention-${range.start}`}
+        data-mention-token={range.person.id}
+        data-mention-kind={range.person.kind}
+        className={`text-primary bg-primary/15 rounded-[3px] shadow-[0_0_0_2px] shadow-primary/15${
+          mentionTokenClassName ? ` ${mentionTokenClassName}` : ''
+        }`}
+      >
+        {text}
+      </span>
+    );
+  }
+  // Human-only tokens carry a quiet dotted underline as their inline marker
+  // (text-decoration never affects glyph layout, so overlay alignment is
+  // safe). The accessible explanation lives in HumanOnlySkillNotice below
+  // the textarea — this overlay is aria-hidden.
+  return (
+    <span
+      key={`skill-${range.start}`}
+      data-skill-ref-token={range.skill.entry.name}
+      data-skill-ref-human-only={range.skill.entry.humanOnly ? 'true' : undefined}
+      className={`text-primary bg-primary/10 rounded-[3px] ${
+        range.skill.entry.humanOnly
+          ? 'underline decoration-dotted decoration-primary/60 underline-offset-2'
+          : ''
+      }`}
+    >
+      {text}
+    </span>
+  );
+}
+
 interface ComposerTextareaProps {
   value: string;
   onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
@@ -1063,6 +1121,12 @@ const ComposerTextarea: React.FC<ComposerTextareaProps> = ({
     [textareaRef],
   );
 
+  // The one list of spans the overlay paints, from every active source.
+  const ranges = useMemo(
+    () => mergeTokenRanges(value, [skillTokenRanges(tokens)]),
+    [value, tokens],
+  );
+
   // Keep the mirror aligned when the value changes without a scroll event
   // (e.g. programmatic insertion moving the caret into a scrolled region).
   useEffect(() => {
@@ -1105,29 +1169,11 @@ const ComposerTextarea: React.FC<ComposerTextareaProps> = ({
 
   const segments: React.ReactNode[] = [];
   let pos = 0;
-  tokens.forEach((token, i) => {
-    if (token.start < pos || token.end > value.length) return; // stale tokens for a different value
-    if (token.start > pos) segments.push(value.slice(pos, token.start));
-    // Human-only tokens carry a quiet dotted underline as their inline marker
-    // (text-decoration never affects glyph layout, so overlay alignment is
-    // safe). The accessible explanation lives in HumanOnlySkillNotice below
-    // the textarea — this overlay is aria-hidden.
-    segments.push(
-      <span
-        key={`${token.start}-${i}`}
-        data-skill-ref-token={token.entry.name}
-        data-skill-ref-human-only={token.entry.humanOnly ? 'true' : undefined}
-        className={`text-primary bg-primary/10 rounded-[3px] ${
-          token.entry.humanOnly
-            ? 'underline decoration-dotted decoration-primary/60 underline-offset-2'
-            : ''
-        }`}
-      >
-        {value.slice(token.start, token.end)}
-      </span>,
-    );
-    pos = token.end;
-  });
+  for (const range of ranges) {
+    if (range.start > pos) segments.push(value.slice(pos, range.start));
+    segments.push(renderTokenSpan(range, value.slice(range.start, range.end)));
+    pos = range.end;
+  }
   segments.push(value.slice(pos));
 
   return (
