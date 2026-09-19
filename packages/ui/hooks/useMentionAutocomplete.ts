@@ -34,6 +34,12 @@ export interface UseMentionAutocompleteResult {
   select: (index: number) => void;
   /** The ids whose readable token still survives in the text. */
   mentionIds: readonly string[];
+  /**
+   * The same survivors as people, for a caller that needs their labels — the
+   * composer paints each surviving token as a chip. Frozen-empty with no
+   * source, the same treatment `mentionIds` gets.
+   */
+  mentions: readonly MentionPerson[];
 }
 
 /**
@@ -93,6 +99,7 @@ export function useMentionAutocomplete(options: {
     () => (enabled ? survivors.map((p) => p.id) : NO_IDS),
     [enabled, survivors],
   );
+  const mentions = enabled ? survivors : NO_PEOPLE;
 
   const onMentionsChange = source?.onMentionsChange;
   const mentionsKey = mentionIds.join('\u0000');
@@ -244,5 +251,6 @@ export function useMentionAutocomplete(options: {
     onSelect: readCaret,
     select,
     mentionIds,
+    mentions,
   };
 }

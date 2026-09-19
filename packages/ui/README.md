@@ -258,6 +258,24 @@ in 0.42.0 (proven by diffing the mounted `outerHTML` against the base commit).
   no-access dialog) and inserts normally when you do not. Not wired to any
   Plannotator data and not a `configurePlannotatorUI` seam — pass it where you
   render the composer.
+- **`CommentPopover` mention chips** (0.44.0): with a `mentionSource`, the
+  `@Label` tokens the picker inserted render as chips in the composer's text —
+  the same mirrored overlay skill references use, never a second layer. Each
+  chip span carries `data-mention-token="<person id>"` and
+  `data-mention-kind`, which is `MentionPerson.kind` verbatim — today that is
+  always `user`, because the picker offers users only; `agent` is reserved
+  and matches nothing yet. `MentionSource.tokenClassName?` is appended to the
+  span for your own look. **Metric rule, yours to keep too:** a chip
+  may change color, background, border-radius, box-shadow and text-decoration
+  ONLY — padding, margin, border width, weight, tracking or size move a glyph
+  and drift the caret off the painted text (want a pill? add
+  `box-shadow: 0 0 0 Npx <background>`, which paints without taking space).
+  Only a person you supplied and the author picked is a chip, and editing a
+  byte of the token un-chips it in the same render that drops the id. Two
+  inherited limits: two labels that sanitize to the same token are one token
+  in a plain-text body, so the first person you list owns every occurrence of
+  it; and a restored draft has no chips (and reports no ids) until the author
+  picks again. No source → no overlay element at all.
 - **`Viewer` / `HtmlViewer` `mentionSource`** (0.43.1): the same prop on the two
   viewers, forwarded to every comment composer each of them mounts, so a host
   wires mentions once per surface instead of per composer. The ids the author
@@ -268,7 +286,10 @@ in 0.42.0 (proven by diffing the mounted `outerHTML` against the base commit).
 
 See HANDOFF.md § "Host toolbar seams (0.43.0)" for the grammar, the keyboard
 rules and the threading points, and § "mentionSource on the viewers (0.43.1)"
-for the two viewer props and the annotation field.
+for the two viewer props and the annotation field. § "Mention token chips in
+the composer (0.44.0)" covers the chips, the metric rule, the merged-range
+refactor behind them, and the three inherited limits (duplicate labels,
+restored drafts, and a label that is a prefix of another label).
 
 ### WebMCP provider (`@plannotator/ui/webmcp`; 0.32.0)
 

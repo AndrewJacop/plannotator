@@ -45,6 +45,20 @@ export interface MentionSource {
   readonly emptyNotice?: string | null;
   /** Optional heading drawn above the list ("People in this workspace"). Absent → no heading row. */
   readonly heading?: string | null;
+  /**
+   * Optional class appended to each `@Label` chip the composer paints in its
+   * text (0.44.0), for a host that wants its own chip look.
+   *
+   * THE METRIC RULE IS THE HOST'S TO KEEP: the chip is painted by an overlay
+   * mirrored behind a transparent-text textarea, so it may change COLOR,
+   * BACKGROUND, BORDER-RADIUS, BOX-SHADOW and TEXT-DECORATION only. Anything
+   * that moves a glyph — padding, margin, border width, font-weight,
+   * letter-spacing, font-size — drifts the painted text off the textarea's
+   * own layout and takes the caret with it. Fake a pill's breathing room
+   * with `box-shadow: 0 0 0 Npx <background>`, which paints without
+   * occupying space.
+   */
+  readonly tokenClassName?: string;
   /** Fires on every text change with the ids whose token still survives in the body. */
   readonly onMentionsChange?: (ids: readonly string[]) => void;
   /**
