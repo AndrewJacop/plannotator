@@ -201,6 +201,40 @@ describe.if(hasDom)('AnnotationToolbar host seams', () => {
     expect(closed).toBe(0);
   });
 
+  test('an actions list that empties while the dropdown is open does not wedge the toolbar', async () => {
+    // The failure this catches: the open flag outliving the button that owns
+    // it. The dropdown (and its Escape handler) unmount with the wand, but a
+    // raw `showSelectionActions` would keep the toolbar's own Escape,
+    // type-to-comment and outside-dismiss listeners stood down forever.
+    let closed = 0;
+    const anchor = await mount({
+      onClose: () => { closed++; },
+      selectionActions: [{ id: 'only', label: 'Explain', onSelect: () => {} }],
+    });
+    await click(wand()!);
+    expect(document.querySelector('[data-selection-actions-picker]')).not.toBeNull();
+
+    // The host recomputes its actions for this selection and has none.
+    await act(async () => {
+      root?.render(
+        <AnnotationToolbar
+          element={anchor}
+          positionMode="center-above"
+          onAnnotate={() => {}}
+          onClose={() => { closed++; }}
+          onRequestComment={() => {}}
+          onQuickLabel={() => {}}
+          copyText="SELECTED"
+          selectionActions={[]}
+        />,
+      );
+    });
+    expect(wand()).toBeNull();
+    expect(document.querySelector('[data-selection-actions-picker]')).toBeNull();
+    await press('Escape');
+    expect(closed).toBeGreaterThan(0);
+  });
+
   test('Alt+digit applies a quick label by default and is dead with quickLabels:false', async () => {
     const applied: string[] = [];
     await mount({ onQuickLabel: (label) => applied.push(label.id) });

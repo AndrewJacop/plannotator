@@ -528,6 +528,17 @@ export const CommentPopover: React.FC<CommentPopoverProps> = ({
     skillAc.menu?.activeIndex === null || skillAc.menu?.activeIndex === undefined
       ? undefined
       : `${skillListboxId}-option-${skillAc.menu.activeIndex}`;
+  // At most one of the two menus can be open (their triggers are disjoint), so
+  // the textarea's ARIA relationship points at whichever one is. All three are
+  // `undefined`/false with no menu open, which is every render Plannotator
+  // makes without a `mentionSource`.
+  const activeMentionOptionId =
+    mentionAc.menu === null || mentionAc.menu.activeIndex === null
+      ? undefined
+      : `${mentionListboxId}-option-${mentionAc.menu.activeIndex}`;
+  const composerListboxId = mentionAc.menu !== null ? mentionListboxId : skillListboxId;
+  const composerListboxOpen = skillAc.menu !== null || mentionAc.menu !== null;
+  const activeComposerOptionId = activeSkillOptionId ?? activeMentionOptionId;
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (skillAc.onKeyDown(e)) return;
@@ -673,9 +684,9 @@ export const CommentPopover: React.FC<CommentPopoverProps> = ({
               sizeClassName="min-h-32 max-h-full"
               skillReferences={skillReferences}
               tokens={skillAc.referenceTokens}
-              listboxId={skillListboxId}
-              listboxOpen={skillAc.menu !== null}
-              activeOptionId={activeSkillOptionId}
+              listboxId={composerListboxId}
+              listboxOpen={composerListboxOpen}
+              activeOptionId={activeComposerOptionId}
             />
             <HumanOnlySkillNotice skills={skillAc.humanOnlyReferences} />
             {mentionAc.menu && (
@@ -837,9 +848,9 @@ export const CommentPopover: React.FC<CommentPopoverProps> = ({
           sizeClassName="max-h-64 min-h-[4.5rem]"
           skillReferences={skillReferences}
           tokens={skillAc.referenceTokens}
-          listboxId={skillListboxId}
-          listboxOpen={skillAc.menu !== null}
-          activeOptionId={activeSkillOptionId}
+          listboxId={composerListboxId}
+          listboxOpen={composerListboxOpen}
+          activeOptionId={activeComposerOptionId}
         />
         <HumanOnlySkillNotice skills={skillAc.humanOnlyReferences} />
         {mentionAc.menu && (
@@ -1073,6 +1084,11 @@ const ComposerTextarea: React.FC<ComposerTextareaProps> = ({
     return (
       <textarea
         data-pn-mobile-editable="true"
+        // Absent any open menu these are all undefined, so the plain textarea
+        // renders exactly the attributes it always did.
+        aria-autocomplete={listboxOpen ? 'list' : undefined}
+        aria-controls={listboxOpen ? listboxId : undefined}
+        aria-activedescendant={activeOptionId}
         ref={attachRef}
         value={value}
         onChange={onChange}

@@ -87,6 +87,18 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
   const actionsButtonRef = useRef<HTMLButtonElement>(null);
   const quickLabels = useMemo(() => getQuickLabels(), []);
 
+  // A picker counts as open only while the button that opens it is actually
+  // rendered. Without this, a host whose `selectionActions` go empty (or who
+  // flips `quickLabels` off) while its dropdown is open unmounts the dropdown
+  // and its Escape handler, but leaves the flag set — and the flag is what
+  // stands the toolbar's own Escape, type-to-comment and outside-dismiss
+  // listeners down, wedging the toolbar until the ✕ is clicked. Both flags are
+  // false whenever the props are absent, so Plannotator's toolbar is
+  // unchanged.
+  const hasSelectionActions = !!selectionActions && selectionActions.length > 0;
+  const selectionActionsOpen = showSelectionActions && hasSelectionActions;
+  const quickLabelsOpen = showQuickLabels && !commentOnly && quickLabelsEnabled;
+
   useEffect(() => { setCopied(false); }, [element]);
 
   const handleCopy = async () => {
@@ -141,7 +153,7 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
       if (isEditableElement(e.target) || isEditableElement(document.activeElement)) return;
 
       // When a picker is open, let it own all keyboard input
-      if (showQuickLabels || showSelectionActions) return;
+      if (quickLabelsOpen || selectionActionsOpen) return;
 
       if (e.key === "Escape") {
         onClose();
@@ -179,19 +191,13 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
       window.removeEventListener("keydown", handleKeyDown);
       releaseCapture();
     };
-  }, [onClose, onRequestComment, onQuickLabel, quickLabels, showQuickLabels, showSelectionActions, commentOnly, quickLabelsEnabled]);
+  }, [onClose, onRequestComment, onQuickLabel, quickLabels, quickLabelsOpen, selectionActionsOpen, commentOnly, quickLabelsEnabled]);
 
   useDismissOnOutsideAndEscape({
-    enabled: !showQuickLabels && !showSelectionActions,
+    enabled: !quickLabelsOpen && !selectionActionsOpen,
     ref: toolbarRef,
     onDismiss: onClose,
   });
-
-  const hasSelectionActions = !!selectionActions && selectionActions.length > 0;
-  const actionText = copyText
-    ?? element.querySelector('code')?.textContent
-    ?? element.textContent
-    ?? '';
 
   if (!position) return null;
 
@@ -269,16 +275,22 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
             onClick={() => setShowSelectionActions(prev => !prev)}
             icon={<WandIcon />}
             label="Actions"
-            className={showSelectionActions ? "text-primary bg-primary/10" : "text-primary hover:bg-primary/10"}
+            className={selectionActionsOpen ? "text-primary bg-primary/10" : "text-primary hover:bg-primary/10"}
             dataAttributes={{ 'data-selection-actions': 'true' }}
           />
         )}
-        {hasSelectionActions && showSelectionActions && actionsButtonRef.current && (
+        {selectionActionsOpen && actionsButtonRef.current && (
           <FloatingSelectionActionsPicker
             anchorEl={actionsButtonRef.current}
             actions={selectionActions!}
             onSelect={(action) => {
               setShowSelectionActions(false);
+              // Read at invoke time, not on every render: a toolbar with no
+              // host actions must not walk the element's text at all.
+              const actionText = copyText
+                ?? element.querySelector('code')?.textContent
+                ?? element.textContent
+                ?? '';
               action.onSelect(buildSelectionActionContext(element, actionText));
               onClose();
             }}
@@ -302,7 +314,7 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
               label="Looks good"
               className="hover:bg-green-500/10"
             />
-            {!commentOnly && quickLabelsEnabled && showQuickLabels && zapButtonRef.current && (
+            {quickLabelsOpen && zapButtonRef.current && (
               <FloatingQuickLabelPicker
                 anchorEl={zapButtonRef.current}
                 onSelect={(label) => {

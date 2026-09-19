@@ -18,7 +18,8 @@ export interface SelectionActionContext {
   blockId: string;
   /** Offset of the selection within the block's text, 0 when unknown. */
   startOffset: number;
-  /** `startOffset + text.length`. */
+  /** `startOffset + text.length` — so on a block-less surface it is the
+   *  selection's length, not 0. */
   endOffset: number;
   /** The element the toolbar is anchored to. */
   element: HTMLElement;
@@ -40,6 +41,12 @@ export interface SelectionAction {
  * arithmetic deliberately reproduce `createAnnotationFromSource`'s, so an
  * action sees the same coordinates an annotation created from the same
  * selection would carry.
+ *
+ * ONE deliberate deviation: when the selection is not found inside the block
+ * at all — a selection spanning two blocks, where the anchor sits in the
+ * first — `String.split` yields the whole block text and the annotation path
+ * would report `blockText.length`. A host gets 0 instead, since an offset
+ * past the end of the block is worse than an admitted "unknown".
  */
 export function buildSelectionActionContext(
   element: HTMLElement,

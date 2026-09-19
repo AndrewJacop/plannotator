@@ -938,8 +938,11 @@ is entirely the host's business.
   the selection — deliberately the same arithmetic
   `createAnnotationFromSource` uses, so an action sees the coordinates an
   annotation created from that same selection would carry. On a surface with
-  no blocks (raw HTML) it degrades to `blockId: ''` and `0`/`0`, which is
-  exactly what an HTML annotation stores.
+  no blocks (raw HTML) it degrades to `blockId: ''` and `startOffset: 0`
+  (`endOffset` is then the selection's length; an HTML annotation itself
+  stores `0`/`0`). The one deliberate deviation from the annotation path is
+  a selection the block does not contain — one spanning two blocks — where
+  the annotation path reports `blockText.length` and a host gets `0`.
 
 ### 2. `AnnotationToolbar` `quickLabels` — the opt-out switch
 

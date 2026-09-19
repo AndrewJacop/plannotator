@@ -234,8 +234,9 @@ in 0.42.0 (proven by diffing the mounted `outerHTML` against the base commit).
   opening the package's dropdown below it (arrows + Enter + Escape, nothing
   preselected until the first arrow). `onSelect` receives
   `{ text, blockId, startOffset, endOffset, element }` — the same coordinates
-  an annotation created from that selection would carry — and the toolbar
-  closes. **The package creates no annotation:** what an action does is yours.
+  an annotation created from that selection would carry (`blockId: ''` and
+  `startOffset: 0` on a surface with no blocks, such as raw HTML) — and the
+  toolbar closes. **The package creates no annotation:** what an action does is yours.
   An empty array renders no button.
 - **`AnnotationToolbar` `quickLabels`** (default `true`): `false` hides the Zap
   picker and makes the Alt+digit label shortcuts inert on that toolbar. The
