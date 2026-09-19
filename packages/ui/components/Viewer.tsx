@@ -99,6 +99,9 @@ export interface ViewerProps {
    * one wand button that opens the package's dropdown. Absent → unchanged.
    */
   selectionActions?: SelectionAction[];
+  /** Opt-in host capability: the glyph on the `selectionActions` button on
+   *  both toolbars. Absent → the package's own wand. */
+  selectionActionsIcon?: React.ReactNode;
   /**
    * Whether the package's quick labels are offered on the selection toolbars
    * (default true). `false` hides the Zap picker and the Alt+digit label
@@ -382,6 +385,7 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(({
   inputMethod = 'drag',
   taterMode,
   selectionActions,
+  selectionActionsIcon,
   quickLabels,
   mentionSource,
   globalAttachments = [],
@@ -1339,6 +1343,7 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(({
               onRequestComment={handleRequestComment}
               onQuickLabel={handleQuickLabel}
               selectionActions={selectionActions}
+              selectionActionsIcon={selectionActionsIcon}
               quickLabels={quickLabels}
               copyText={toolbarState.selectionText}
               hideCopyButton={!isTouchDevice}
@@ -1396,6 +1401,7 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(({
                 onRequestComment={handleCodeBlockRequestComment}
                 onQuickLabel={handleCodeBlockQuickLabel}
                 selectionActions={selectionActions}
+                selectionActionsIcon={selectionActionsIcon}
                 quickLabels={quickLabels}
                 isExiting={isCodeBlockToolbarExiting}
                 onMouseEnter={() => {

@@ -238,6 +238,10 @@ in 0.42.0 (proven by diffing the mounted `outerHTML` against the base commit).
   `startOffset: 0` on a surface with no blocks, such as raw HTML) — and the
   toolbar closes. **The package creates no annotation:** what an action does is yours.
   An empty array renders no button.
+- **`AnnotationToolbar` `selectionActionsIcon`** (forwarded by `Viewer` and
+  `HtmlViewer`): the glyph on the `selectionActions` button, so a host can match
+  the wand it draws elsewhere. Absent means the package's own wand; nothing else
+  about the button changes.
 - **`AnnotationToolbar` `quickLabels`** (default `true`): `false` hides the Zap
   picker and makes the Alt+digit label shortcuts inert on that toolbar. The
   one-click 👍 is unaffected, and mode state is still yours to clamp.

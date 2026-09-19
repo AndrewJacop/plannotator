@@ -1026,7 +1026,7 @@ the people and what a mention means.
 
 ### Threading points
 
-- `AnnotationToolbar` (`selectionActions`, `quickLabels`) — the props live here.
+- `AnnotationToolbar` (`selectionActions`, `selectionActionsIcon`, `quickLabels`) — the props live here. `selectionActionsIcon?: React.ReactNode` (0.43.1) is the glyph on the wand button, forwarded by `Viewer` (both toolbars) and `HtmlViewer`; absent → the package's own wand, which 0.43.1 also simplified to one thick diagonal with a single star (the six-spark glyph read as noise at 16px). Name, `data-selection-actions`, size and behavior of the button are untouched either way.
 - `Viewer` forwards both to BOTH of its toolbars (the text-selection toolbar
   and the code-block hover toolbar).
 - `HtmlViewer` forwards `selectionActions` to its selection toolbar. It does
