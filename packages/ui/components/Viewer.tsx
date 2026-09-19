@@ -59,6 +59,7 @@ import { DiagramBlockPending } from './diagram/DiagramPending';
 import { isGraphvizLanguage, isMermaidLanguage } from './diagramLanguages';
 import { getIdentity } from '../utils/identity';
 import { type QuickLabel } from '../utils/quickLabels';
+import type { SelectionAction } from '../utils/selectionActions';
 import { DocBadges, type DocBadgesProps, type LinkedDocBadgeInfo } from './DocBadges';
 import { PinpointOverlay } from './PinpointOverlay';
 import { usePinpoint } from '../hooks/usePinpoint';
@@ -91,6 +92,18 @@ export interface ViewerAnnotationHeaderConfig {
 
 /** Public properties for the Markdown document Viewer. */
 export interface ViewerProps {
+  /**
+   * Opt-in host capability, passed straight through to the selection
+   * toolbars: the host's own commands for the current selection, rendered as
+   * one wand button that opens the package's dropdown. Absent → unchanged.
+   */
+  selectionActions?: SelectionAction[];
+  /**
+   * Whether the package's quick labels are offered on the selection toolbars
+   * (default true). `false` hides the Zap picker and the Alt+digit label
+   * shortcuts; the 👍 button is unaffected.
+   */
+  quickLabels?: boolean;
   blocks: Block[];
   markdown: string;
   frontmatter?: Frontmatter | null;
@@ -360,6 +373,8 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(({
   mode,
   inputMethod = 'drag',
   taterMode,
+  selectionActions,
+  quickLabels,
   globalAttachments = [],
   onAddGlobalAttachment,
   onRemoveGlobalAttachment,
@@ -1296,6 +1311,8 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(({
               onClose={handleToolbarClose}
               onRequestComment={handleRequestComment}
               onQuickLabel={handleQuickLabel}
+              selectionActions={selectionActions}
+              quickLabels={quickLabels}
               copyText={toolbarState.selectionText}
               hideCopyButton={!isTouchDevice}
               closeOnScrollOut
@@ -1351,6 +1368,8 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(({
                 onClose={handleCodeBlockToolbarClose}
                 onRequestComment={handleCodeBlockRequestComment}
                 onQuickLabel={handleCodeBlockQuickLabel}
+                selectionActions={selectionActions}
+                quickLabels={quickLabels}
                 isExiting={isCodeBlockToolbarExiting}
                 onMouseEnter={() => {
                   if (hoverTimeoutRef.current) {
