@@ -1,6 +1,16 @@
 import type { DiagramAnchor } from '@plannotator/core/diagram-anchor';
+import type { DiagramRenderKind } from '@plannotator/core/annotatable';
 
 export type { DiagramAnchor } from '@plannotator/core/diagram-anchor';
+export type { DiagramRenderKind } from '@plannotator/core/annotatable';
+
+/**
+ * How a document's body is rendered. `markdown` and `html` are the original
+ * pair; the two diagram kinds are whole-file diagram sources (.mmd/.mermaid,
+ * .dot/.gv) that render as ONE diagram through the same engine a ```mermaid
+ * fence uses — see diagramDocumentBlocks in utils/parser.
+ */
+export type DocumentRenderAs = 'markdown' | 'html' | DiagramRenderKind;
 
 export enum AnnotationType {
   DELETION = 'DELETION',
@@ -192,6 +202,16 @@ export interface Block {
   order: number; // Sorting order
   startLine: number; // 1-based line number in source
   sourceLineCount?: number; // Number of source lines consumed when it differs from content lines
+  /**
+   * Line offset a diagram comment's `sourceLine` is measured from, when it
+   * differs from `startLine`. A ```mermaid fence in a document has its opening
+   * line ABOVE the diagram's first line, so `startLine` is the right offset
+   * there and this stays unset. A whole-file diagram source (.mmd/.dot) has no
+   * fence: its first line IS document line 1, so it sets 0 here while
+   * `startLine` keeps naming the block's own first line for the export's
+   * `(lines a–b)` label.
+   */
+  diagramSourceLineOffset?: number;
 }
 
 export interface DiffResult {
