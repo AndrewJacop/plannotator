@@ -220,6 +220,41 @@ the in-flow host integration.
 
 One renderer slot and one canvas render every Mermaid and Graphviz diagram — the fences in `Viewer` (`MermaidBlock`, `GraphvizBlock`), their popout, and whatever a host renders itself. `DiagramViewer` from `@plannotator/ui/components/diagram` takes `kind`, `source`, `theme` (`{ colorTheme, mode, shadowAmount? }`), `comments: DiagramComment[]` and `onCreateComment(anchor, text, additionalTargets)`; pass `onSave(source) => Promise<{ status: 'ok' } | { status: 'stale', currentSource }>` to get the Source pane (left of the canvas on desktop, under it on the phone; `readOnlySource` shows it without Save), and `sourceOpen` to toggle it. Zoom, pan and fit are the canvas's (wheel, drag, `+` `-` `0`, arrow keys); a click opens the composer at the part beneath while a drag pans (4 px threshold, 10 px for a finger), nothing highlights on a plain mouse-over (the ring under the pointer needs the platform modifier held), every edge carries an invisible 14 px hit path in one top layer and a click is resolved by priority over everything under the pointer (node, then edge, then cluster; an edge label is its edge), a click on no part comments on the whole diagram (kind `diagram`), sequence diagrams are addressable (actors, messages, notes, frames), a saved comment paints a ring and a numbered badge from the array order, and every comment re-resolves against each render through the engine's finder (id, then label, then unanchored — reported through `onUnanchoredChange`). The anchor is `DiagramAnchor` from `@plannotator/core/diagram-anchor` (`{ v: 1, family, kind, id | from + to, label, sourceLine }`, document lines), and Plannotator stores it as `Annotation.diagramAnchor`. Runtime slots: `utils/mermaid` (as before) and `utils/graphviz` (new, same shape, `@viz-js/viz` pinned `3.30.0`), each lazy on first use or filled by the host. `DiagramPopout` is the full-size viewer in the `PopoutDialog` chrome. See HANDOFF.md § "Diagram engine (0.41.0)" for every export, the adapter, the sanitizer and the migration notes.
 
+### Host toolbar seams (0.43.0)
+
+Two opt-in props for hosts that want their own commands and their own people
+inside the annotation UI. Both default to today's behavior — pass neither and
+the toolbar and the comment composer render byte-for-byte what they rendered
+in 0.42.0 (proven by diffing the mounted `outerHTML` against the base commit).
+
+- **`AnnotationToolbar` `selectionActions`** (forwarded by `Viewer` to both its
+  toolbars, and by `HtmlViewer` to the HTML selection toolbar): an array of
+  `{ id, label, detail?, icon?, onSelect(ctx) }`. They render as ONE wand
+  button (`data-selection-actions`) in the slot the quick-labels Zap occupied,
+  opening the package's dropdown below it (arrows + Enter + Escape, nothing
+  preselected until the first arrow). `onSelect` receives
+  `{ text, blockId, startOffset, endOffset, element }` — the same coordinates
+  an annotation created from that selection would carry — and the toolbar
+  closes. **The package creates no annotation:** what an action does is yours.
+  An empty array renders no button.
+- **`AnnotationToolbar` `quickLabels`** (default `true`): `false` hides the Zap
+  picker and makes the Alt+digit label shortcuts inert on that toolbar. The
+  one-click 👍 is unaffected, and mode state is still yours to clamp.
+- **`CommentPopover` `mentionSource`**: `{ people, emptyNotice?,
+  onMentionsChange?, onPickBlocked? }` over `MentionPerson`
+  (`{ id, kind, label, detail, canOpen }`). Typing `@` at a word boundary opens
+  a portaled picker measured from the textarea; picking inserts the readable
+  `@Label ` token, and the ids ride `onMentionsChange(ids)` plus an optional
+  third `onSubmit(text, images?, mentions?)` argument that is passed **only**
+  when a source is supplied. Deleting a token untags that person. A
+  `canOpen: false` person inserts nothing when you supply `onPickBlocked` (your
+  no-access dialog) and inserts normally when you do not. Not wired to any
+  Plannotator data and not a `configurePlannotatorUI` seam — pass it where you
+  render the composer.
+
+See HANDOFF.md § "Host toolbar seams (0.43.0)" for the grammar, the keyboard
+rules and the threading points.
+
 ### WebMCP provider (`@plannotator/ui/webmcp`; 0.32.0)
 
 The engine that lets a browser-integrated agent (Chrome/Edge WebMCP, `document.modelContext`) call in-page tools on a document surface. Feature-detected once; a browser without the API sees no registration, no DOM, no network, no timers. Seam: `configurePlannotatorUI({ webmcp: { enabled, namePrefix } })`, default enabled with the `plannotator.` prefix; pass `enabled: false` to keep a host page tool-free, or your own prefix to namespace the tools beside your own. There is deliberately no confirmation seam: the catalog is read-and-comment only (no approve / submit / close tools), and the agent may only edit or remove comments stamped `source: "browser-agent"`.
@@ -255,7 +290,7 @@ npm install @plannotator/ui @plannotator/core
 - `@plannotator/core` — pure utils + types, zero deps, browser-safe (CI enforces no `node:` imports). Published.
 - `@plannotator/ui` — React components/hooks + theme + `configure()`. Depends on an exact published `@plannotator/core` version. Published.
 - `@plannotator/shared`, `@plannotator/ai` — stay private to the monorepo; `shared` re-exports `core`'s modules via shims so Plannotator's internals are untouched.
-- Currently `@plannotator/ui` 0.41.0 depends exactly on `@plannotator/core` 0.25.4. `core` is bumped only when something under `packages/core` changes, so `ui` can advance alone. Keep the published core version exact in `packages/ui/package.json`; do not use a `workspace:` protocol there, because a directly published manifest must remain installable outside this monorepo. Bun still links the matching local workspace during development. When both packages change, publish `core` first, then build and publish the UI tarball. See HANDOFF.md "Publishing & versioning" for the verification command.
+- Currently `@plannotator/ui` 0.43.0 depends exactly on `@plannotator/core` 0.25.5. `core` is bumped only when something under `packages/core` changes, so `ui` can advance alone. Keep the published core version exact in `packages/ui/package.json`; do not use a `workspace:` protocol there, because a directly published manifest must remain installable outside this monorepo. Bun still links the matching local workspace during development. When both packages change, publish `core` first, then build and publish the UI tarball. See HANDOFF.md "Publishing & versioning" for the verification command.
 
 ## The one rule
 
