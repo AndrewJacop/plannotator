@@ -186,6 +186,8 @@ jobs:
           packages/ui/components/AnnotationToolbar.commentOnly.test.tsx
           packages/ui/components/AnnotationToolbar.selectionActions.test.tsx
           packages/ui/components/CommentPopover.mentionSource.test.tsx
+          packages/ui/components/Viewer.mentionSource.test.tsx
+          packages/ui/components/html-viewer/HtmlViewer.mentionSource.test.tsx
           packages/ui/components/AnnotationToolstrip.test.tsx
           packages/ui/components/StickyHeaderLane.test.tsx
           packages/ui/components/CommentPopover.quickLookGood.test.tsx

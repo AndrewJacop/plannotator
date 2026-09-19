@@ -252,9 +252,17 @@ in 0.42.0 (proven by diffing the mounted `outerHTML` against the base commit).
   no-access dialog) and inserts normally when you do not. Not wired to any
   Plannotator data and not a `configurePlannotatorUI` seam — pass it where you
   render the composer.
+- **`Viewer` / `HtmlViewer` `mentionSource`** (0.43.1): the same prop on the two
+  viewers, forwarded to every comment composer each of them mounts, so a host
+  wires mentions once per surface instead of per composer. The ids the author
+  kept ride onto the created annotation as `Annotation.mentions`
+  (`readonly string[]`, present only when a source was supplied and at least
+  one token survived). It is host data: the package never renders, exports,
+  shares or archives it.
 
 See HANDOFF.md § "Host toolbar seams (0.43.0)" for the grammar, the keyboard
-rules and the threading points.
+rules and the threading points, and § "mentionSource on the viewers (0.43.1)"
+for the two viewer props and the annotation field.
 
 ### WebMCP provider (`@plannotator/ui/webmcp`; 0.32.0)
 

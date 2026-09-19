@@ -83,6 +83,7 @@ export interface Annotation {
   author?: string; // Tater identity for collaborative sharing
   source?: string; // External tool identifier (e.g., "eslint") — set when annotation comes from external API
   images?: ImageAttachment[]; // Attached images with human-readable names
+  mentions?: readonly string[]; // opaque host ids named with `@` in the comment body, set ONLY when a host supplied a `mentionSource` to the composer and at least one token survived; the key is absent otherwise. Host data: the package never renders, exports, shares or archives it.
   isQuickLabel?: boolean; // true if created via quick label chip
   quickLabelTip?: string; // optional instruction tip from the label definition
   diffContext?: 'added' | 'removed' | 'modified'; // set when annotation created in plan diff view
