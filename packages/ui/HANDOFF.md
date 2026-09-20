@@ -1361,6 +1361,11 @@ It follows the footer's contract line for line:
 - Returning `null` / `undefined` / `false` for a card renders no wrapper for
   that card. Omitting the prop renders no wrapper anywhere: there is no empty
   container to lay out or style around.
+- The header row is ONE non-wrapping flex line shared with the type word, the
+  `diff` / page / `Unanchored` chips and the timestamp. The wrapper is
+  `min-w-0` and shrinks, but a host node that cannot shrink will overflow
+  toward the built-in actions rather than wrap — keep the stamp compact, or
+  give it its own truncation.
 
 **Not on `CodeAnnotation` cards.** `CodeAnnotationCard` (the review-editor
 shape) takes no `renderCardFooter` either, so neither new prop was threaded
@@ -1412,7 +1417,11 @@ survived to save.** Never `mentions: []`, never the key with an `undefined`
 value — an untouched or pick-less edit calls `onEdit({ text })` byte for byte
 as it did in 0.44.0, so it can never wipe tags the annotation already carries.
 `source.onMentionsChange` fires from the hook exactly as it does in the
-composer. The Save BUTTON and `Mod+Enter` go through the same call.
+composer, which on this surface means it reports `[]` once when the editor
+OPENS, before any pick: it is the live state of this edit session, not the
+annotation's stored `mentions`. Only `onEdit` is authoritative — a host that
+mirrors `onMentionsChange` into its own record must not treat that opening
+`[]` as a clear. The Save BUTTON and `Mod+Enter` go through the same call.
 
 **"This edit session" is literal.** The edit box was extracted into
 `AnnotationEditComposer`, mounted only while a card is in edit mode, so the

@@ -122,6 +122,7 @@ describe.if(hasDom)('AnnotationPanel card edit box mentionSource', () => {
     expect(el.hasAttribute('aria-autocomplete')).toBe(false);
     expect(el.hasAttribute('aria-haspopup')).toBe(false);
     expect(el.hasAttribute('aria-controls')).toBe(false);
+    expect(el.hasAttribute('aria-owns')).toBe(false);
     expect(el.hasAttribute('aria-activedescendant')).toBe(false);
     await type(el, 'ping @ma');
     expect(picker()).toBeNull();

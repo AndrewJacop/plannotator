@@ -308,7 +308,9 @@ All-files view).
   `readOnly` for the same reason the footer does — a stamp is a read
   affordance — and, like the footer, only on the OPEN document's cards in the
   All-files grouped view. Return `null` for a card and no wrapper exists for
-  it; omit the prop and no wrapper exists at all.
+  it; omit the prop and no wrapper exists at all. The header row is one
+  non-wrapping flex line, so keep the stamp compact: the wrapper shrinks but
+  a node that cannot will overflow toward the built-in actions.
 - **`mentionSource?: MentionSource`** — the same source `Viewer` and
   `HtmlViewer` take (0.43.1), applied to the card's EDIT box, so a comment can
   be re-tagged after it was written. The grammar, the picker, the keyboard
@@ -317,7 +319,10 @@ All-files view).
   AND at least one person was picked in that edit session whose token
   survives; otherwise it is the `onEdit(id, { text })` it always was, so an
   untouched or pick-less edit can never wipe tags the annotation already
-  carries. Reopening the editor starts a fresh session with nobody picked.
+  carries. Reopening the editor starts a fresh session with nobody picked, and
+  `onMentionsChange` follows that session — it reports `[]` once when the
+  editor opens, so treat it as the live picker state, never as the
+  annotation's stored tags.
   **One difference from `CommentPopover`: no chips** — the token stays plain
   text, because the chip layer lives in the composer's mirrored overlay and is
   not worth duplicating; the follow-up is to move the card's edit box onto
