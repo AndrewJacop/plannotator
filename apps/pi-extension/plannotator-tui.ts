@@ -37,9 +37,16 @@ import { appendFeedbackRecord, deriveFeedbackProject } from "./generated/feedbac
 
 const execFileAsync = promisify(execFile);
 
-/** True when PLANNOTATOR_RENDERER asks for the TUI renderer. */
-export function isTuiRendererEnabled(): boolean {
-	return (process.env.PLANNOTATOR_RENDERER ?? "").trim().toLowerCase() === "tui";
+/**
+ * True when the TUI renderer is active. Precedence: PLANNOTATOR_RENDERER env
+ * (explicit per-session override) > `"renderer": "tui"` in .pi/plannotator.json
+ * (project) or ~/.pi/agent/plannotator.json (global), resolved by the caller
+ * via resolveRenderer > default browser.
+ */
+export function isTuiRendererEnabled(configRenderer?: "browser" | "tui" | null): boolean {
+	const env = (process.env.PLANNOTATOR_RENDERER ?? "").trim().toLowerCase();
+	if (env) return env === "tui";
+	return configRenderer === "tui";
 }
 
 const stoppedError = () => {

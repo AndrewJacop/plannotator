@@ -25,7 +25,7 @@ import type {
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Key } from "@earendil-works/pi-tui";
-import { buildPromptVariables, formatTodoList, loadPlannotatorConfig, renderTemplate, resolveExecutionMode, resolvePhaseProfile } from "./config.ts";
+import { buildPromptVariables, formatTodoList, loadPlannotatorConfig, renderTemplate, resolveExecutionMode, resolvePhaseProfile, resolveRenderer } from "./config.ts";
 import {
 	type ChecklistItem,
 	markCompletedSteps,
@@ -1321,7 +1321,7 @@ export default function plannotator(pi: ExtensionAPI): void {
 			checklistItems = parseChecklist(planContent);
 
 			// Non-interactive, TUI renderer without browser assets, or no HTML: auto-approve
-			const tuiRenderer = isTuiRendererEnabled();
+			const tuiRenderer = isTuiRendererEnabled(resolveRenderer(plannotatorConfig));
 			if (!ctx.hasUI || (!tuiRenderer && !hasPlanBrowserHtml())) {
 				if (resolveExecutionMode(plannotatorConfig) === "external") {
 					await handoffApprovedPlan(ctx, inputPath, planContent);
