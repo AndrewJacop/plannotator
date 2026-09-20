@@ -154,6 +154,8 @@ jobs:
           packages/review-editor/components/FileTreeNode.controls.test.tsx
           packages/ui/components/Settings.analysis.test.tsx
           packages/ui/components/AnnotationPanel.props.test.tsx
+          packages/ui/components/AnnotationPanel.cardHeader.test.tsx
+          packages/ui/components/AnnotationPanel.editMentions.test.tsx
           packages/ui/components/Viewer.consumer.test.tsx
           packages/ui/components/Viewer.documentHeader.test.tsx
           packages/ui/components/Viewer.codeBlockHighlightSwap.test.tsx

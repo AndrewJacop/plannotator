@@ -16,7 +16,7 @@ import {
   type ComposerTokenRange,
 } from '../utils/composerTokens';
 import { useMentionAutocomplete } from '../hooks/useMentionAutocomplete';
-import { MentionPicker } from './MentionPicker';
+import { MentionAutocompleteMenu, mentionActiveOptionId } from './MentionAutocomplete';
 import type { MentionPerson, MentionSource } from '../utils/mentions';
 import {
   hasPrimaryCoarsePointer,
@@ -551,10 +551,7 @@ export const CommentPopover: React.FC<CommentPopoverProps> = ({
   // the textarea's ARIA relationship points at whichever one is. All three are
   // `undefined`/false with no menu open, which is every render Plannotator
   // makes without a `mentionSource`.
-  const activeMentionOptionId =
-    mentionAc.menu === null || mentionAc.menu.activeIndex === null
-      ? undefined
-      : `${mentionListboxId}-option-${mentionAc.menu.activeIndex}`;
+  const activeMentionOptionId = mentionActiveOptionId(mentionListboxId, mentionAc.menu);
   const composerListboxId = mentionAc.menu !== null ? mentionListboxId : skillListboxId;
   const composerListboxOpen = skillAc.menu !== null || mentionAc.menu !== null;
   const activeComposerOptionId = activeSkillOptionId ?? activeMentionOptionId;
@@ -709,21 +706,11 @@ export const CommentPopover: React.FC<CommentPopoverProps> = ({
               activeOptionId={activeComposerOptionId}
             />
             <HumanOnlySkillNotice skills={skillAc.humanOnlyReferences} />
-            {mentionAc.menu && (
-              <MentionPicker
-                id={mentionListboxId}
-                people={mentionAc.menu.items}
-                emptyNotice={mentionAc.menu.emptyNotice}
-                heading={mentionAc.menu.heading}
-                active={mentionAc.menu.activeIndex}
-                anchor={mentionAc.menu.anchor}
-                onPick={(person) => {
-                  const index = mentionAc.menu?.items.findIndex((p) => p.id === person.id) ?? -1;
-                  if (index >= 0) mentionAc.select(index);
-                }}
-                onHover={() => {}}
-              />
-            )}
+            <MentionAutocompleteMenu
+              id={mentionListboxId}
+              menu={mentionAc.menu}
+              onSelect={mentionAc.select}
+            />
           </div>
 
           {/* Footer — DOM order sets tab order (Save first); row-reverse keeps the visual layout unchanged */}
@@ -875,21 +862,11 @@ export const CommentPopover: React.FC<CommentPopoverProps> = ({
           activeOptionId={activeComposerOptionId}
         />
         <HumanOnlySkillNotice skills={skillAc.humanOnlyReferences} />
-        {mentionAc.menu && (
-          <MentionPicker
-            id={mentionListboxId}
-            people={mentionAc.menu.items}
-            emptyNotice={mentionAc.menu.emptyNotice}
-            heading={mentionAc.menu.heading}
-            active={mentionAc.menu.activeIndex}
-            anchor={mentionAc.menu.anchor}
-            onPick={(person) => {
-              const index = mentionAc.menu?.items.findIndex((p) => p.id === person.id) ?? -1;
-              if (index >= 0) mentionAc.select(index);
-            }}
-            onHover={() => {}}
-          />
-        )}
+        <MentionAutocompleteMenu
+          id={mentionListboxId}
+          menu={mentionAc.menu}
+          onSelect={mentionAc.select}
+        />
       </div>
 
       {/* Footer — same DOM-order/row-reverse pattern as the dialog footer above */}

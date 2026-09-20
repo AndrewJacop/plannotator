@@ -291,6 +291,47 @@ the composer (0.44.0)" covers the chips, the metric rule, the merged-range
 refactor behind them, and the three inherited limits (duplicate labels,
 restored drafts, and a label that is a prefix of another label).
 
+### Annotation card seams (`AnnotationPanel`; 0.45.0)
+
+Two more opt-in props, both on the panel and both defaulting to today's
+behavior — pass neither and the panel renders byte-for-byte what it rendered
+in 0.44.0 (proven by diffing mounted `outerHTML` against the base commit for
+an empty panel, every card kind, a card in edit mode, `readOnly` and the
+All-files view).
+
+- **`renderCardHeader?: (annotation) => ReactNode`** — the twin of
+  `renderCardFooter`, rendered inside each plan-annotation card's header row
+  after `author · time` and before the built-in edit/delete actions: the place
+  for a status stamp (resolved, needs reply, a reviewer badge). Its wrapper is
+  `[data-annotation-card-header]` and swallows clicks and keydowns, so
+  interacting with your stamp never selects the card. It renders under
+  `readOnly` for the same reason the footer does — a stamp is a read
+  affordance — and, like the footer, only on the OPEN document's cards in the
+  All-files grouped view. Return `null` for a card and no wrapper exists for
+  it; omit the prop and no wrapper exists at all. The header row is one
+  non-wrapping flex line, so keep the stamp compact: the wrapper shrinks but
+  a node that cannot will overflow toward the built-in actions.
+- **`mentionSource?: MentionSource`** — the same source `Viewer` and
+  `HtmlViewer` take (0.43.1), applied to the card's EDIT box, so a comment can
+  be re-tagged after it was written. The grammar, the picker, the keyboard
+  rules and `onPickBlocked` are the ones documented above. Saving an edit
+  calls `onEdit(id, { text, mentions })` **only** when a source is supplied
+  AND at least one person was picked in that edit session whose token
+  survives; otherwise it is the `onEdit(id, { text })` it always was, so an
+  untouched or pick-less edit can never wipe tags the annotation already
+  carries. Reopening the editor starts a fresh session with nobody picked, and
+  `onMentionsChange` follows that session — it reports `[]` once when the
+  editor opens, so treat it as the live picker state, never as the
+  annotation's stored tags.
+  **One difference from `CommentPopover`: no chips** — the token stays plain
+  text, because the chip layer lives in the composer's mirrored overlay and is
+  not worth duplicating; the follow-up is to move the card's edit box onto
+  `ComposerTextarea`.
+
+Neither prop reaches `CodeAnnotation` cards (the review-editor shape), which
+take no `renderCardFooter` either. See HANDOFF.md § "Annotation card header
+slot and mentions on the edit box (0.45.0)".
+
 ### WebMCP provider (`@plannotator/ui/webmcp`; 0.32.0)
 
 The engine that lets a browser-integrated agent (Chrome/Edge WebMCP, `document.modelContext`) call in-page tools on a document surface. Feature-detected once; a browser without the API sees no registration, no DOM, no network, no timers. Seam: `configurePlannotatorUI({ webmcp: { enabled, namePrefix } })`, default enabled with the `plannotator.` prefix; pass `enabled: false` to keep a host page tool-free, or your own prefix to namespace the tools beside your own. There is deliberately no confirmation seam: the catalog is read-and-comment only (no approve / submit / close tools), and the agent may only edit or remove comments stamped `source: "browser-agent"`.
